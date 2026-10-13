@@ -1,0 +1,75 @@
+x-app: &app
+  image: ${APP_IMAGE:-medication-companion:release}
+  build:
+    context: .
+    args:
+      VITE_SUPABASE_URL: ${SUPABASE_URL:?Set SUPABASE_URL}
+      VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:?Set VITE_SUPABASE_ANON_KEY}
+  env_file: ${APP_ENV_FILE:-.env.production}
+  environment:
+    NODE_ENV: production
+    LOCAL_DEMO: "false"
+    PUSH_ADAPTER: webpush
+    PORT: "3001"
+    TRUST_PROXY: "1"
+  init: true
+  read_only: true
+  tmpfs: ["/tmp:size=64m,mode=1777"]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+services:
+  migrate:
+    <<: *app
+    command: ["node", "scripts/container-start.mjs", "migrate"]
+    restart: "no"
+    healthcheck:
+      disable: true
+  api:
+    <<: *app
+    command: ["node", "scripts/container-start.mjs", "api"]
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "scripts/container-health.mjs", "api"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+  worker:
+    <<: *app
+    command: ["node", "scripts/container-start.mjs", "worker"]
+    restart: unless-stopped
+    stop_grace_period: 30s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "scripts/container-health.mjs", "worker"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+  https:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?Set APP_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+volumes:
+  caddy-data:
+  caddy-config:

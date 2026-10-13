@@ -1,0 +1,21 @@
+import { readFile } from "node:fs/promises";
+import { pool, transaction } from "./client";
+await transaction(async (c) => {
+  await c.query("SELECT pg_advisory_xact_lock(846101)");
+  await c.query(
+    "CREATE TABLE IF NOT EXISTS schema_migrations(version integer PRIMARY KEY)",
+  );
+  for (const version of [1, 2, 3, 4, 5, 6])
+    if (
+      !(
+        await c.query("SELECT 1 FROM schema_migrations WHERE version=$1", [
+          version,
+        ])
+      ).rowCount
+    )
+      await c.query(
+        await readFile(new URL(`./00${version}.sql`, import.meta.url), "utf8"),
+      );
+});
+await pool.end();
+console.log("Migrations complete");

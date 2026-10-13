@@ -1,0 +1,343 @@
+MEDICATION COMPANION PWA — COMPLETE AI CODING SPECIFICATION
+Version 1.0 | 12 October 2026 | Intended initial audience: older adults in Thailand using iPhone
+
+HOW TO USE THIS FILE
+Give this entire file to an AI coding tool with access to a development repository. Ask it to implement the release scope in milestone order, run the acceptance tests, and provide deployment instructions. This is a build specification, not an implemented or clinically validated application. Example values and thresholds below are engineering defaults, not medical advice.
+
+COPY-READY IMPLEMENTATION INSTRUCTION
+Act as a senior full-stack engineer with accessibility and healthcare software experience. Build the working PWA described below, including its backend, persistent database, push scheduler, offline data model, tests, and deployment documentation. Do not stop at a mockup. Use the default architecture unless the existing repository has a suitable established stack; document adaptations. Inspect repository instructions before changes. Use maintained stable dependencies, pin exact versions in a lockfile, and check official documentation when implementing platform-specific behavior. Do not fabricate successful push delivery, completed tests, clinical verification, or production readiness. Implement real integrations with environment variables and setup documentation; when credentials are absent, use clearly labeled local adapters and list the remaining setup steps. Use synthetic patient data only. Never deploy publicly or enter real patient information without the project owner's authorization. Deliver all first-release requirements; keep later features behind disabled flags. Ask only blocking questions; otherwise document assumptions and proceed.
+
+1. PRODUCT GOAL AND NON-NEGOTIABLE DECISIONS
+Build a photo-led medication organizer that answers:
+• What medicines are scheduled now?
+• What are my current medicine instructions?
+• What should I show my physician at an OPD visit?
+
+The chosen platform is a responsive, installable PWA. Prioritize iPhone Home Screen use. Also support browser access for setup and review. Thai is the default UI language; provide English translations. Maintain original medicine names alongside optional translated descriptions. Do not invent translations of drug names or instructions.
+
+First-release users: patient; optional invited caregiver. One patient profile per owner in the first release; a caregiver may assist several profiles, with explicit profile selection. The active patient's identity must remain visible. Clinicians need no account to review the patient's phone or patient-exported PDF.
+
+The app organizes instructions supplied by patients, caregivers, or professionals. It does not prescribe, change doses autonomously, identify pills from appearance, or decide whether a late dose should be taken.
+
+2. PWA AND IPHONE CONSTRAINTS
+WebKit introduced Web Push for Home Screen web apps on iOS/iPadOS 16.4. Installation and a user-initiated permission request are required. Feature-detect capabilities; do not rely solely on user-agent strings. Maintain a supported-device matrix based on actual testing. [S1, S2]
+
+Use HTTPS, a manifest, a service worker, a backend scheduler, and standards-based Web Push with VAPID. An open browser tab, setTimeout, setInterval, periodic background sync, or a continuously running service worker must NOT be the reminder engine. Push is server-driven and connectivity-dependent. [S3, S4]
+
+Offline: previously downloaded medicines, schedules, photos, and OPD summary remain usable; dose records and edits can queue locally. New server pushes cannot reliably reach a disconnected phone. The server does not know offline changes until synchronization. Display this limitation where it matters.
+
+Do not promise exact-time delivery, custom persistent alarm sounds, bypass of silent mode/Focus, guaranteed lock-screen display, or native notification action buttons. Use a tap-to-open notification as the baseline. Account for OS-controlled notification presentation and browser storage removal. Persistence requests are best effort, not a backup guarantee. [S1, S5]
+
+Show practical onboarding instructions for Add to Home Screen with text and simple illustrations. Adapt instructions to verified supported iOS versions. Avoid an Android-style install prompt on iPhone where unsupported.
+
+3. RELEASE SCOPE
+Required first release:
+• Thai/English accessible UI; Today, My medicines, and Show doctor tabs.
+• Secure account sign-in, profile, allergy recording, and optional caregiver invitations.
+• Manual medication entry, package/label photos, review, versioned editing, pause/resume/stop.
+• Fixed daily times, selected weekdays, date-limited courses, and separate as-needed medicines.
+• Server Web Push, installation/permission guidance, test notification, and device management.
+• Taken/skipped/unconfirmed dose records, corrections, and limited reminder snoozing.
+• Offline reading and queued writes, clear synchronization state, and explicit conflict handling.
+• OPD summary, offline-capable PDF export, and patient-controlled sharing of the exported file.
+• Backups, account export/deletion, audit trail, security controls, and operational monitoring.
+
+Later, disabled by default:
+• OCR label extraction with mandatory review and confidence/field provenance.
+• Consent-based caregiver escalation for unconfirmed doses.
+• Refill estimates, advanced taper schedules, hospital/pharmacy imports, secure expiring clinician links.
+
+Exclude from this release: automatic dose recommendations, interaction checking, disease diagnosis, barcode-based dose inference, pill recognition from color/shape, public patient pages, and claims of medical-device certification or legal compliance.
+
+4. DESIGN AND NAVIGATION
+Use three persistent bottom tabs with icons plus labels:
+Today / วันนี้
+My medicines / ยาของฉัน
+Show doctor / แสดงให้แพทย์ดู
+
+Keep account, reminder settings, caregivers, history, and language inside a clearly labeled settings menu. Put Add medicine prominently in My medicines. OPD summary must be reachable within two taps from the main screen.
+
+Use approximately 20px body text as a starting point, adjustable sizing, scalable layout, 56px primary action height, and at least 44px targets elsewhere. Meet WCAG 2.2 AA contrast and keyboard expectations. Support 200% text enlargement, narrow iPhone screens, safe-area insets, VoiceOver, reduced motion, and visible focus. Never disable browser zoom. Test Thai wrapping and numeral legibility. Do not communicate state by color alone or use emoji as the only label.
+
+Use real package photos with a neutral placeholder when absent. Photos support recognition; medicine name, strength, route, and dose remain visible. Permit zooming labels. For non-oral medicines use neutral verbs such as “Use” and correct units, not “swallow tablets.”
+
+Today screen:
+• Active patient identity, next scheduled group, and date.
+• Group by exact time; optional morning/midday/evening/bedtime headings do not alter schedules.
+• Each card: photo, name, strength, amount per dose, route when relevant, exact time, food instructions, and status.
+• Taken, Remind later, Skip actions on each dose. Do not bulk-confirm a group in release one.
+• Already recorded items collapse below upcoming items; history remains accessible.
+• Past scheduled time with no entry = “Not confirmed,” never automatically “Missed.”
+• As-needed medicines have their own section, not overdue cards.
+
+My medicines screen:
+• Default active list with search by name, brand, and user-entered purpose.
+• Toggle By medicine / By time; separate As needed and Paused/stopped filters.
+• Medicine detail shows current and future-effective instructions, sources, photos, verification status, and history.
+
+5. FIRST-TIME SETUP
+1. Explain the app in one screen. Allow synthetic demo mode without collecting patient data.
+2. Create/sign into the account using a managed authentication provider. Default: email one-time code with a persistent session, editable later if patient testing favors another supported method. A caregiver uses their own account, not shared credentials.
+3. Enter patient display name, optional date of birth, language, timezone (default Asia/Bangkok), and allergy status.
+4. Add the first medicine; allow incomplete drafts without reminders.
+5. Guide Home Screen installation and reopening from the installed icon.
+6. On an explicit “Enable reminders” tap, feature-check, request permission, create subscription, and register it server-side.
+7. Send a test push and ask the user whether they saw it. A server acceptance response alone is not proof of display.
+8. Optional caregiver invitation. Allow completion without it.
+
+Show a reminder setup checklist: installed, permission allowed, subscription registered, test confirmed by user, last successful server synchronization. Do not collapse this into a misleading “Guaranteed reminders active” badge.
+
+6. MEDICATION ENTRY, EDITING, AND SAFETY
+Guided form: photo → identity → amount/route → schedule → review/save. Manual entry must work without a photo. Save drafts at each step. Camera and photo picker are both supported; handle permissions, unsupported formats, and failed uploads clearly.
+
+Identity fields:
+• Entered name (required to activate); generic name and brand if known.
+• Form: tablet, capsule, liquid, drops, injection, inhaler, topical, other.
+• Strength as structured value/unit when appropriate plus original label text. Support combination products and concentrations without forcing them into one mg field.
+• Route; purpose (optional); prescribing source (optional); package/label photo(s).
+
+Dose fields:
+• Amount per administration and unit, separate from strength.
+• Positive decimal/rational quantities such as 0.5 tablet or 2.5 mL; preserve original displayed instruction.
+• Allow differing amounts at different scheduled times through individual schedule slots.
+• Do not calculate mL from concentration, infer splitting suitability, or auto-convert units in release one.
+• Unclear/unknown values remain explicit and prevent reminder activation until required instructions are confirmed.
+
+Schedule fields:
+• Daily fixed times, or selected weekdays with fixed times.
+• Start date, optional inclusive end date, and IANA timezone.
+• Food relationship copied from prescribed instructions. A meal label alone is insufficient for a timed push; require a user-confirmed exact clock time.
+• As needed: no routine reminders; preserve clinician-provided indication, interval, and maximum if supplied. Do not infer these values or calculate whether taking another dose is safe.
+• Complex tapers, alternating cycles, and interval-based regimens outside supported types: allow a clearly labeled reference-only record with original instructions; no generated reminders until an appropriate future workflow exists.
+
+Final review shows a plain-language summary. Required confirmation: the recorded instructions match the prescription/label or advice received. This confirmation is not professional verification.
+
+Editing:
+• Show before/after, effective date/time, reason/source, and person editing.
+• Persist a new immutable regimen version. Never rewrite historical dose occurrences.
+• On server commit, invalidate superseded future occurrences and unsent reminders transactionally; regenerate affected future occurrences.
+• Pausing/resuming/stopping similarly creates an audited change. Stop removes future reminders, not history.
+• Duplicate name/strength matches create a nonblocking “Possible duplicate—review” prompt, never automatic merging.
+• Flag inconsistent units, zero/negative amounts, invalid times/dates, overlapping regimen versions, and duplicate schedule slots.
+• Changing the recorded medicine identity must be distinguished from correcting a spelling mistake. A different medicine should normally be a new record.
+
+7. DOSE RECORDING AND TIME RULES
+For each scheduled occurrence use immutable occurrence ID, regimen version, slot ID, intended local date/time, resolved UTC time, and timezone.
+Store “taken,” “skipped,” and correction/undo as append-only events. Record actor, event ID, occurrence ID, client timestamp, server receipt time, and optional actual administration time. The projected status is derived from valid events. Keep user corrections visible in history.
+
+Repeated taps with the same operation ID produce one event. Conflicting independent records for the same occurrence from two devices require review; do not count two administrations or silently discard the conflict. An unconfirmed past occurrence is not a clinical determination that a dose was missed.
+
+Future occurrences should not offer Taken by default. Backdated records require confirmation and must not silently mark a different scheduled occurrence. Free-form as-needed administrations have their own event IDs and recorded times, not fabricated scheduled doses.
+
+Snooze is a reminder-only action: propose 10 or 30 minutes, maximum two snoozes per occurrence. These are configurable notification defaults, not recommended medicine delays. No snoozes past the reminder expiry or a replacement/stop event. Clearly distinguish a snoozed reminder from changed prescription timing.
+
+Timezone rule: keep the regimen in its configured timezone. If device timezone differs, show both and ask whether the user intends a schedule change; never silently shift prescriptions. Changing timezone creates a future-effective regimen version. For DST zones, nonexistent wall-clock times should be flagged for review; ambiguous repeated times resolve once under a documented policy and never create duplicate administrations. Test this even though Asia/Bangkok has no DST.
+
+8. PUSH NOTIFICATION DESIGN
+Architecture: committed regimen → future occurrences → durable reminder jobs → worker → Web Push service → service worker → visible notification → Today screen.
+
+Use the same pure schedule library on client and server. Generate a rolling 30-day horizon server-side, refresh daily, and regenerate on changes. Monitor horizon exhaustion. Use a database-backed job queue and durable worker; never depend on a browser staying open or a request handler staying alive after response.
+
+Default patient notification text:
+“Medication reminder — Open to review your medicine schedule.”
+Thai: “แจ้งเตือนยา — เปิดแอปเพื่อตรวจสอบรายการยา”
+No name, diagnosis, medicine name, dose, or patient identifier on the lock screen by default. Release one can keep all push text generic. Tapping opens an authenticated same-origin route with an opaque ID, never a dose instruction encoded in the URL.
+
+Scheduling and dispatch requirements:
+• Aggregate simultaneous occurrences per patient and intended time into one visible notification per selected device. Each medicine remains individually actionable inside the app.
+• Use a unique job key including patient, group/time, subscription, reminder kind, and reminder revision.
+• Worker claims jobs atomically with leases; crashed workers can recover. Recheck current regimen version, status, account/device authorization, recorded dose status, and expiration immediately before send.
+• Handle duplicate execution. Database uniqueness prevents duplicate jobs; transport ambiguity still permits rare duplicate pushes, so also use a stable notification tag. Do not claim exactly-once delivery.
+• Product default: 15-minute notification freshness window, configurable after pilot. This is NOT a clinically acceptable lateness interval. Expire transport messages and retries within that window; never replay a backlog of obsolete “take now” alerts after outage.
+• Use a positive TTL bounded by remaining freshness time and compliant with provider requirements. Do not send expired jobs. [S2, S6]
+• Retry transient errors and rate limits with bounded exponential backoff/jitter and Retry-After handling. Remove/deactivate invalid subscriptions on definitive expiration responses such as 404/410. Alert on authorization/configuration errors.
+• Push payload contains only generic display text, opaque identifiers, schema version, and expiry metadata. No protected details needed for display.
+• Service worker calls showNotification for push events; do not implement invisible background pushes. Safari expects visible notifications. [S2]
+• A stale/duplicate push that reaches the service worker must not render obsolete dose instructions. Display a neutral “Open to review your current medication schedule” notification if required; fetch current authorized state on open. Do not rely on silently suppressing all old pushes.
+• A notification already accepted by a push provider cannot reliably be recalled. This is why payload text remains generic and current instructions are loaded inside the app.
+• Use event.waitUntil for async push/click work. On click focus an existing app window or open an allowlisted internal route. Validate payload schema and routing.
+
+Device lifecycle:
+• Store one subscription per installed browser instance; support explicit replacement, disable, and revoke.
+• A caregiver device receives patient reminders only after explicit opt-in; editing access is not notification consent.
+• Reconcile actual subscription and permission on app launch/resume. Do not rely solely on pushsubscriptionchange support.
+• Permission denied: explain how to open phone settings; do not repeatedly prompt.
+• Unsupported/uninstalled state: app remains usable and shows setup guidance.
+• Sign-out revokes this device's server reminder binding before completing when online. Offline sign-out warns that server removal is pending and clears local private data; generic notifications may persist until remote revocation completes. Provide account-level remote device revocation.
+
+Telemetry states: queued, attempted, accepted by push service, failed, expired, opened (if observed), test seen (user confirmed). Never label accepted as delivered/read/taken. Do not record sensitive message bodies in logs.
+
+9. OFFLINE STORAGE AND SYNCHRONIZATION
+Store app shell in service-worker Cache Storage. Store profile-scoped records, photos, schedule projections, and the mutation outbox in IndexedDB. Do not indiscriminately cache authenticated API responses or PDF exports in shared HTTP caches. Bundle fonts/icons needed offline.
+
+Every write has a UUID operation ID, resource ID, base version, actor/device context, and local timestamp. The server enforces authorization and optimistic concurrency, returns authoritative versions, and makes replay idempotent. Use a monotonic server change cursor for incremental synchronization; represent deletions as tombstones until clients reconcile.
+
+Synchronize on launch, resume, online transition, and explicit retry. Background Sync can be an enhancement only. A network indicator alone is not proof that the server is reachable.
+
+Offline medication edits update the local view as pending, but show prominently:
+“This change is saved on this phone. Server reminders may still follow the previous schedule until you reconnect.”
+Local planned instructions and the last server-confirmed regimen must remain distinguishable. Pending stop/pause changes get the same warning. Offline dose logs also cannot immediately suppress remote reminders. Never show “All synced” until the server acknowledges operations.
+
+Regimen conflicts: freeze the disputed pending update, show server and local versions, and request explicit resolution. Keep last committed server instructions authoritative for server pushes; show the unresolved conflict on Today and OPD views. Do not silently use last-write-wins for doses or regimens. Unrelated medication edits may merge.
+
+Use IndexedDB schema migrations with transactional safeguards. Show quota/storage failure and preserve drafts where possible. Request persistent storage if available, explain its limits, and rely on authenticated server backup for recovery. Restore after reinstall must work from the account; unsynced data can be lost if browser storage is cleared. [S5]
+
+10. OPD MEDICATION SUMMARY
+One-tap readable summary from its main tab, including:
+• Patient name, optional DOB, generation time, latest server sync, and latest medication review.
+• Allergies: known allergy with reaction, none known, or unknown/not recorded—distinct states.
+• Active medicines: entered/generic/brand names, strength, form, amount per administration, route, frequency, exact times where relevant, food instructions, and start/end dates.
+• As-needed medicines, OTC products, supplements, and herbal products.
+• Paused/stopped medicines in a separate recent-changes section, default last 30 days.
+• Future-effective changes, incomplete/reference-only records, unconfirmed identity/dose, and unresolved/pending offline changes clearly flagged.
+• Prescribed/recorded instructions versus patient-reported actual use, when supplied.
+• Verification source, person/role, and date; no “clinician verified” label without a legitimate recorded professional review workflow.
+• Optional recent self-reported dose history; no claim that tapping Taken proves ingestion.
+
+Prominent label: “Patient/caregiver-reported medication list. Please reconcile with prescriptions and actual medicines.” Complete lists should include nonprescription products. [S7]
+
+Create the summary from a consistent data snapshot so screen and export agree. Export a readable PDF with embedded Thai font, repeating table headers and page numbers. Aim for one page when short; use more pages instead of tiny text or truncation. Offline PDF generation must work after initial asset caching. Use file sharing if supported and a download/print fallback. Never upload an exported PDF publicly by default.
+
+11. CAREGIVER PERMISSIONS
+Owner can invite a named caregiver through a short-lived, single-use, high-entropy invitation. Invitation acceptance requires authentication and explicit agreement. Invitation tokens must not contain patient data. Do not add access merely because an email is supplied.
+
+Roles: viewer (read); editor (medication/dose assistance); owner (membership, exports/deletion, settings). Only owner can invite/revoke or change roles. All operations check patient membership server-side; UI hiding is insufficient. Audit caregiver edits and role changes. Revocation blocks future server access immediately. Previously downloaded information cannot be recalled from an offline device; purge app-managed cache on next authenticated sync and disclose this limit.
+
+12. DEFAULT TECHNICAL ARCHITECTURE
+Use a TypeScript monorepo:
+apps/web — React + Vite, accessible components, i18n, IndexedDB via Dexie, service worker via Workbox tooling.
+apps/api — Node.js API using a maintained framework, schema validation, authentication verification, and authorization.
+apps/worker — independent durable PostgreSQL-backed reminder worker using a maintained job library or equivalent transactional job table.
+packages/domain — shared medication schemas, recurrence/timezone logic, status projection, validation.
+packages/ui — shared visual primitives and translations.
+db — migrations, authorization constraints, indexes, synthetic fixtures.
+tests — unit, integration, browser, accessibility, and manual iPhone scripts.
+
+Use PostgreSQL for canonical data, private object storage for photos, and a managed identity provider. Supabase Auth/Postgres/Storage is a suitable default integration, but server authorization is mandatory regardless of provider. Keep service-role credentials exclusively on the backend. Use an established web-push library with VAPID; do not write custom cryptography. Use a maintained timezone-aware date library and a PDF library supporting Thai font embedding and correct shaping. Validate the rendered Thai PDF, not just extracted text.
+
+Deploy web frontend over HTTPS/CDN; API and always-on worker on a host that supports their runtime; database and private storage in a deliberately selected region. A static frontend alone is insufficient. A serverless alternative is acceptable only with a documented durable scheduler/queue and verified invocation frequency. Document paid-plan dependencies; do not claim free hosting guarantees minute-level jobs.
+
+13. LOGICAL DATA MODEL
+All patient-related tables include patient_id and authorization checks. Use UUID identifiers, created/updated timestamps where applicable, and version columns for editable aggregates.
+
+users: auth subject, display name, language.
+patients: owner, display name, optional DOB, timezone, allergy status, review metadata.
+memberships: patient, user, role, accepted/revoked timestamps; unique active membership.
+invitations: token hash, intended recipient, role, expiry, consumed/revoked timestamp.
+allergies: substance, reaction, source, recording actor.
+medications: identity fields, product type, source, draft/reference-only flags, current version pointer.
+regimen_versions: medication, version, effective interval, status, instruction text, created by, review provenance. No overlapping active effective intervals for the same regimen.
+schedule_slots: regimen version, weekday set, local time, amount, unit, route, date boundaries, timezone; validated structured schedule.
+photos: private storage key, medication, upload status, MIME/size, checksum, owner context.
+dose_occurrences: deterministic unique medication/version/slot/local-date identity, intended local/UTC time, validity state.
+dose_events: immutable event UUID, occurrence or as-needed reference, actor, status/action, actual time, receipt time, superseded event reference.
+devices: user, client instance, display label, last seen, revoked timestamp.
+push_subscriptions: device, endpoint (unique/hash for indexing), encrypted keys, expiry/disabled state.
+device_patient_reminder_preferences: patient/device consent and enable flag.
+reminder_jobs: unique key, group, subscription, revision, due/expiry, lease, attempts, state.
+push_attempts: job, timestamps, provider status code/category; no payload/endpoint in ordinary logs.
+sync_operations: actor/device/operation unique key and result for idempotency.
+change_feed: monotonic cursor and minimal authorized change references/tombstones.
+audit_events: actor, action, target, timestamp, version references; protected access.
+
+Use decimal-safe quantities or explicit rational values, not floating point for dose comparisons. Treat display dates and UTC timestamps as different data types. Add indexes for patient lists, due jobs, subscription lookup, occurrence date ranges, and sync cursors.
+
+14. API CONTRACT OUTLINE
+Provide an OpenAPI document with request/response schemas and examples. Use authenticated sessions/tokens and server-derived actor identity. Never trust client-supplied patient ownership or professional role.
+
+GET/PATCH /api/profile
+GET/POST /api/patients/{id}/medications
+GET /api/patients/{id}/medications/{medicationId}
+POST /api/patients/{id}/medications/{medicationId}/regimens
+POST /api/patients/{id}/medications/{medicationId}/status-changes
+POST /api/patients/{id}/dose-events
+GET /api/patients/{id}/occurrences?from=&to=
+POST /api/patients/{id}/reminder-snoozes
+GET /api/patients/{id}/summary
+POST /api/patients/{id}/photo-uploads; POST finalize; authorized GET access
+GET/POST/DELETE /api/devices and /api/push-subscriptions as appropriate
+POST /api/push/test (own registered device only, rate limited)
+POST /api/patients/{id}/invitations; POST accept; DELETE membership
+POST /api/sync/push; GET /api/sync/pull?cursor=
+POST /api/account/export; DELETE /api/account (reauthentication required)
+
+Mutation requests carry idempotency key and expected version where relevant. Return 409 conflicts with authorized current version; validation errors identify fields. Bound date ranges and batch sizes. A sync batch returns per-operation results and handles dependencies; never partially acknowledge a transaction as fully successful.
+
+15. PRIVACY, SECURITY, AND OPERATIONS
+Use TLS, private object buckets, least-privilege service accounts, secret management, signed short-lived photo access, rate limits, and schema validation. Protect cookie-based mutations against CSRF and restrict CORS to owned origins. Apply a restrictive Content Security Policy and sanitize/escape user-entered label text. Do not execute HTML from medicine instructions.
+
+Validate upload content and size; strip EXIF where practical, compress while keeping labels readable, and reject unsupported formats with useful guidance. Keep tokens, patient data, photos, and push endpoints out of analytics, URLs, crash reports, and application logs. Push endpoints are capability-like secrets: validate HTTPS and guard the push sender against SSRF/private-network destinations using maintained provider-aware validation and egress controls. Never fetch arbitrary client URLs.
+
+Browser-local health data is exposed to anyone with access to the unlocked device/browser profile and to malicious same-origin scripts. Do not advertise IndexedDB as encrypted or an app PIN overlay as strong encryption. Minimize retained local data; account switch/sign-out must clear patient caches and revoke the device where possible. If adding a true cryptographic offline lock later, design key recovery and notification interactions explicitly.
+
+Provide human-readable consent and privacy text in Thai/English, export and deletion controls, and documented retention/backups. Before using real patient data, the owner must review local privacy and any applicable clinical/regulatory requirements with qualified support; do not assert PDPA compliance from implementation alone. This is a release gate, not a request for the coding agent to invent legal advice.
+
+Monitor scheduler heartbeat, due-job lag, expired jobs, provider errors, subscription failures, database/storage health, backup success, and restore drills. Alert on worker outage/horizon exhaustion. Report push acceptance separately from observed opens. Restore includes medications, history, and memberships; push subscriptions may need re-registration. Keep development, staging, and production isolated.
+
+16. ACCEPTANCE TESTS — REQUIRED BEFORE CLAIMING COMPLETION
+A. Entry: separate strength from amount; handle 0.5 tablet, 2.5 mL, drops, combination strengths, different morning/evening amounts, and reference-only complex regimens. No invented defaults.
+B. Changes: future-effective changes preserve earlier history; stopping/pausing cancels unsent future jobs; resuming starts only the intended dates; duplicated requests do not duplicate records.
+C. Schedules: selected weekdays, inclusive end date, midnight/year boundary, Asia/Bangkok timezone, DST gap/overlap behavior, changed timezone, and overlapping-version rejection.
+D. Dose records: double tap, undo, backdated entry, two-device conflict, as-needed recording, and no automatic “missed” inference.
+E. Push on physical iPhone: fresh Home Screen install, permission granted/denied/revoked, app closed, screen locked, Focus enabled, network loss/reconnect, worker restart, expired subscription, and test confirmation. Record actual observations; browser emulation is not proof of iPhone push behavior.
+F. Staleness: worker outage does not replay old reminders; accepted old push after dose change contains no obsolete instructions; offline stop/edit warns about previous server schedule; notification click reconciles current state.
+G. Deduplication: overlapping workers and retry after ambiguous network failure do not create duplicate jobs; stable tags reduce duplicate display without claiming transport exactly-once.
+H. Offline: cold-open previously installed/cached app, read medicines/photos/summary, record dose, edit draft/regimen, reconnect once, and verify idempotent sync. Test quota failure, cleared storage, logout/account switch, and recovery.
+I. Authorization: cross-patient identifier tampering, viewer attempting edits, expired/reused invite, revoked caregiver, unauthorized photo read, stolen endpoint registration attempt, and role escalation all fail appropriately.
+J. OPD: screen/PDF agree; Thai font and wrapping correct; 1, 10, and 30 medicines remain readable; unknown allergies, unverified medicines, pending edits, recent stops, and supplements visible; offline export works.
+K. Accessibility: VoiceOver reading/actions, keyboard focus, 200% text, large targets, color independence, reduced motion, narrow iPhone portrait/landscape, and Thai labels.
+L. Operations: backup/restore, failed migration recovery, queue lease recovery, secret absence, rate limiting, and no patient information in logs.
+
+Use unit tests for the recurrence engine and status projections, integration tests against a real test database for authorization/transactions/worker behavior, and browser tests for core flows. Provide a manual physical-iPhone test sheet. Mark unrun tests explicitly.
+
+Proposed measurable pilot goals (targets, not achieved results): at least 90% of participants find the next scheduled medicine and show the OPD list without coaching; no unresolved critical medication transcription errors; cached Today opens within two seconds on the selected test phone; normal-operation worker dispatch begins within 60 seconds of due time. Measure server dispatch separately from OS display latency and never treat these targets as guaranteed delivery.
+
+17. IMPLEMENTATION MILESTONES AND DELIVERABLES
+M1 — Foundation: repository, CI, localization, accessible three-tab UI, managed auth, schema/migrations, synthetic fixtures. Exit: authenticated isolation and navigation work.
+M2 — Medication domain: entry/photos, immutable regimen changes, schedule engine, dose events, summary. Exit: domain and version tests pass.
+M3 — PWA/offline: manifest/icons, service worker, IndexedDB, migrations/outbox, synchronization/conflicts, offline summary/PDF. Exit: offline and account-switch tests pass.
+M4 — Push: VAPID setup, subscription lifecycle, durable worker/jobs, freshness/retry rules, diagnostic UI. Exit: integration tests plus documented physical-iPhone results.
+M5 — Caregiver/security: invitation/roles, audit, export/deletion, privacy controls, backup/monitoring. Exit: authorization/security tests pass.
+M6 — Pilot readiness: accessibility review, Thai-language review, clinician/pharmacist review of labels and summary, supervised patient usability testing, bug fixes, deployment/runbook.
+
+Deliver working source; lockfile; .env.example with placeholders; migration/seed scripts; OpenAPI schema; automated tests/results; manual iPhone checklist; architecture and limitations documentation; setup/deployment/backup/restore runbook; and a concise known-issues list. No real secrets or patient records in git.
+
+Environment examples (names may adapt to provider): PUBLIC_APP_URL, AUTH_ISSUER, PUBLIC_AUTH_CLIENT_ID, DATABASE_URL, private auth service credential, private storage configuration, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT, worker concurrency, REMINDER_FRESHNESS_SECONDS. Only explicitly public values may enter frontend builds. Document stable VAPID key storage/rotation and subscription re-registration implications.
+
+Development experience: one documented command to run web/API/worker locally with a test database, one command for migrations, one for test suite, and a staging HTTPS setup for real-device push. A simulated push adapter is acceptable for CI only, visibly separated from real push acceptance tests.
+
+DEFINITION OF DONE
+All first-release scope has working implementation, tests, error/empty/offline states, and documented setup. No placeholder controls are presented as functioning. Missing external credentials or unavailable physical-iPhone tests are listed as explicit remaining gates. Public launch with real patients remains a separate owner decision after the pilot and reviews.
+
+18. SOURCE NOTES AND REVIEW BASIS
+Platform statements were reviewed on 12 October 2026. Recheck current documentation when coding and before release. Source references support platform constraints and medication-list completeness; the architecture, scope, UI, thresholds, and workflow rules are proposed product decisions.
+
+[S1] WebKit — Web Push for Web Apps on iOS and iPadOS:
+https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/
+Supports Home Screen installation, iOS 16.4 introduction, user-gesture permission, Focus integration, and web-push behavior.
+
+[S2] Apple Developer — Sending web push notifications in web apps and browsers:
+https://developer.apple.com/documentation/usernotifications/sending-web-push-notifications-in-web-apps-and-browsers
+Supports Apple web-push requirements, visible notifications, and provider error handling. Check current TTL/VAPID requirements during integration.
+
+[S3] MDN — Push API:
+https://developer.mozilla.org/en-US/docs/Web/API/Push_API
+Supports server-originated push, subscriptions, and service-worker notification handling.
+
+[S4] MDN — Offline and background operation:
+https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Guides/Offline_and_background_operation
+Explains PWA offline and event-driven background operation; not an exact-time local alarm guarantee.
+
+[S5] MDN — StorageManager.persist():
+https://developer.mozilla.org/en-US/docs/Web/API/StorageManager/persist
+Supports requesting persistent storage; the result must be checked and cannot substitute for backup.
+
+[S6] Mozilla Services — WebPush's New Requirement: TTL Header:
+https://blog.mozilla.org/services/2016/02/20/webpushs-new-requirement-ttl-header/
+Explains TTL as transport storage lifetime, not clinical timing advice; follow current provider requirements.
+
+[S7] National Institute on Aging — Taking Medicines Safely as You Age:
+https://www.nia.nih.gov/health/medicines-and-medication-management/taking-medicines-safely-you-age
+Medication-list completeness and communication context for older adults. This specification does not supply treatment instructions.
+
+END OF SPECIFICATION

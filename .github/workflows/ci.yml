@@ -1,0 +1,36 @@
+name: Verification
+on: [push, pull_request]
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: medication
+          POSTGRES_PASSWORD: local-only
+          POSTGRES_DB: medication
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U medication"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://medication:local-only@localhost:5432/medication
+      LOCAL_DEMO: "true"
+      PUSH_ADAPTER: simulated
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run migrate && npm run seed
+      - run: npm run typecheck && npm test && npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-evidence
+          path: test-results/

@@ -1,0 +1,11 @@
+.git
+.gitignore
+node_modules
+dist
+.env
+.env.*
+backups
+test-results
+playwright-report
+attachments
+.openai

@@ -1,0 +1,62 @@
+# Isolated synthetic container verification. No real credentials, no public database.
+x-app: &app
+  image: medication-companion:container-check
+  environment: &env
+    NODE_ENV: development
+    DATABASE_URL: postgres://smoke:synthetic-only@db:5432/smoke
+    LOCAL_DEMO: "true"
+    PUSH_ADAPTER: simulated
+    PORT: "3001"
+    PUBLIC_APP_URL: http://localhost:5080
+  init: true
+  read_only: true
+  tmpfs: ["/tmp:size=64m,mode=1777"]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: smoke
+      POSTGRES_PASSWORD: synthetic-only
+      POSTGRES_DB: smoke
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smoke"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+  migrate:
+    <<: *app
+    command: ["node", "scripts/container-start.mjs", "migrate"]
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+  seed:
+    <<: *app
+    command: ["node", "--import", "tsx", "db/seed.ts"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      disable: true
+  api:
+    <<: *app
+    command: ["node", "scripts/container-start.mjs", "api"]
+    ports: ["127.0.0.1:5080:3001"]
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+  worker:
+    <<: *app
+    command: ["node", "scripts/container-start.mjs", "worker"]
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "scripts/container-health.mjs", "worker"]
+      interval: 5s
+      timeout: 5s
+      start_period: 15s
+      retries: 10
