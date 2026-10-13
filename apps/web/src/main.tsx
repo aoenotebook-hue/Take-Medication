@@ -16,6 +16,18 @@ import {
 import { db, clearPrivate, localView, type Snapshot } from "./storage";
 import { exportPdf, summaryRows, font } from "./pdf";
 import { preparePhoto } from "./photo";
+import {
+  commonMedicines,
+  foodOptions,
+  formForUnit,
+  mealNames,
+  mealOf,
+  mealTime,
+  MEALS,
+  readLabel,
+  units,
+  type Meal,
+} from "./autofill";
 import type { Operation } from "../../api/src/service";
 registerSW({ immediate: true });
 const auth =
@@ -156,6 +168,57 @@ function friendlyError(e: any, lang: Language): string {
     return [...new Set(messages)].join(" · ");
   }
   const message = String(e?.message || e || "");
+  const known: Record<string, [string, string]> = {
+    "Medication changed": [
+      "ข้อมูลยานี้ถูกแก้ไขจากอีกเครื่องหนึ่ง กรุณาตรวจสอบแล้วบันทึกใหม่",
+      "This medicine was changed on another device. Please review and save again.",
+    ],
+    "Regimen changed": [
+      "วิธีใช้ยานี้ถูกแก้ไขจากอีกเครื่องหนึ่ง กรุณาตรวจสอบแล้วบันทึกใหม่",
+      "These instructions were changed on another device. Please review and save again.",
+    ],
+    "Profile changed": [
+      "ข้อมูลผู้ป่วยถูกแก้ไขจากอีกเครื่องหนึ่ง กรุณาลองใหม่",
+      "The profile was changed on another device. Please try again.",
+    ],
+    "Occurrence replaced or stopped": [
+      "เวลาใช้ยานี้ถูกเปลี่ยนหรือหยุดแล้ว",
+      "This dose time was changed or stopped.",
+    ],
+    "Snooze unavailable": [
+      "เตือนซ้ำไม่ได้แล้ว (เกินเวลาหรือครบ 2 ครั้ง)",
+      "Remind later is no longer available for this dose.",
+    ],
+    "Future dose cannot be confirmed": [
+      "ยังไม่ถึงเวลา บันทึกได้เมื่อถึงเวลา",
+      "It is not time yet; record it when it is time.",
+    ],
+    "Record the reason for this regimen change": [
+      "กรุณาใส่เหตุผลที่แก้ไข",
+      "Please enter a reason for the change.",
+    ],
+    "Photo is too large; choose a smaller image": [
+      "รูปใหญ่เกินไป กรุณาเลือกรูปที่เล็กลง",
+      "Photo is too large; choose a smaller image.",
+    ],
+    "Unsupported image; export photo as JPEG": [
+      "ไม่รองรับรูปนี้ กรุณาใช้รูป JPEG",
+      "Unsupported photo; use a JPEG image.",
+    ],
+    "Sign in again and confirm DELETE": [
+      "เพื่อความปลอดภัย กรุณาออกจากระบบแล้วเข้าสู่ระบบใหม่ก่อนลบบัญชี",
+      "For safety, sign out and sign in again before deleting the account.",
+    ],
+    "Access denied": [
+      "ไม่มีสิทธิ์ทำรายการนี้",
+      "You do not have permission to do this.",
+    ],
+    "Too many requests": [
+      "ลองหลายครั้งเกินไป กรุณารอสักครู่แล้วลองใหม่",
+      "Too many attempts. Please wait a moment and try again.",
+    ],
+  };
+  if (known[message]) return known[message][th ? 0 : 1];
   if (message === "Wrong phone number or PIN") {
     const left = e?.current?.attemptsLeft;
     return (
@@ -229,7 +292,6 @@ function App() {
     [detail, setDetail] = useState<any>(),
     [filter, setFilter] = useState("active"),
     [search, setSearch] = useState(""),
-    [byTime, setByTime] = useState(false),
     [devices, setDevices] = useState<any[]>([]),
     [email, setEmail] = useState(""),
     [code, setCode] = useState(""),
@@ -406,6 +468,8 @@ function App() {
     if (old && old !== actor) await clearPrivate();
     await db.meta.put({ key: "actor", value: actor });
     setSigned(true);
+    // Best effort: ask the browser not to evict offline medicine data.
+    navigator.storage?.persist?.().catch(() => {});
     // Previously authorized cached data should open before a slow/offline network request.
     if (!location.hash.startsWith("#notification=")) {
       const cached = (await db.snapshots.toArray()).filter((c) =>
@@ -603,6 +667,11 @@ function App() {
     setS(undefined);
     setPatient("");
   }
+  useEffect(() => {
+    if (!message.startsWith("✓")) return;
+    const timer = setTimeout(() => setMessage(""), 6000);
+    return () => clearTimeout(timer);
+  }, [message]);
   useEffect(() => {
     if (signed && localStorage.getItem("pending-revocation"))
       api("/devices/" + deviceId, undefined, "DELETE")
@@ -1048,7 +1117,12 @@ function App() {
           </p>
         ))}
         {message && (
-          <p role="alert" className="warning dismissible">
+          <p
+            role="alert"
+            className={
+              (message.startsWith("✓") ? "success" : "warning") + " dismissible"
+            }
+          >
             <span>{message}</span>
             <button
               onClick={() => setMessage("")}
@@ -1063,7 +1137,7 @@ function App() {
           .map((o) => (
             <article className="warning" key={o.id}>
               <strong>{t.conflict}</strong>
-              <p>{o.error}</p>
+              <p>{friendlyError({ message: o.error }, lang)}</p>
               <pre>{JSON.stringify(o.current?.data, null, 2)}</pre>
               <div className="actions">
                 <button
@@ -1534,9 +1608,6 @@ function App() {
               />
             </label>
             <div className="filters">
-              <button onClick={() => setByTime(!byTime)} aria-pressed={byTime}>
-                ⇅ {byTime ? t.bytime : t.bymedicine}
-              </button>
               <select
                 aria-label={t.status}
                 value={filter}
@@ -1545,10 +1616,9 @@ function App() {
                 {[
                   "active",
                   "as-needed",
+                  "draft",
                   "paused",
                   "stopped",
-                  "draft",
-                  "reference",
                   "all",
                 ].map((x) => (
                   <option key={x} value={x}>
@@ -1567,13 +1637,7 @@ function App() {
                   (filter === "all" ||
                     (current(m.id)?.data.status || "draft") === filter),
               )
-              .sort((a, b) =>
-                byTime
-                  ? (current(a.id)?.data.slots[0]?.time || "").localeCompare(
-                      current(b.id)?.data.slots[0]?.time || "",
-                    )
-                  : a.data.name.localeCompare(b.data.name),
-              )
+              .sort((a, b) => a.data.name.localeCompare(b.data.name))
               .map((m) => (
                 <article className="medicine-card" key={m.id}>
                   <div className="card-body">
@@ -1803,6 +1867,16 @@ function App() {
               }
               await db.drafts.delete(editing.id);
               setEditing(undefined);
+              setMessage(
+                L("✓ บันทึกแล้ว: ", "✓ Saved: ") +
+                  m.name +
+                  (r.status === "draft"
+                    ? L(
+                        " (แบบร่าง ยังไม่แจ้งเตือน)",
+                        " (draft, no reminders yet)",
+                      )
+                    : ""),
+              );
             }}
           />
         </Modal>
@@ -2132,24 +2206,6 @@ function App() {
             <h3>{L("ความเป็นส่วนตัวและข้อมูล", "Privacy and data")}</h3>
             <p className="muted">{t.privacy}</p>
             <button
-              onClick={async () => {
-                const result = await navigator.storage?.persist?.();
-                setMessage(
-                  result
-                    ? L(
-                        "ขอให้เก็บข้อมูลถาวรในเครื่องแล้ว (ไม่ใช่การสำรองข้อมูล)",
-                        "Persistent storage granted (this is not a backup).",
-                      )
-                    : L(
-                        "เบราว์เซอร์ไม่อนุญาตให้เก็บข้อมูลถาวร ข้อมูลยังสำรองไว้ในบัญชี",
-                        "Persistent storage not granted; your account still keeps a copy.",
-                      ),
-                );
-              }}
-            >
-              {L("ขอเก็บข้อมูลถาวรในเครื่อง", "Request persistent storage")}
-            </button>
-            <button
               disabled={view.role !== "owner"}
               onClick={async () => {
                 try {
@@ -2317,10 +2373,15 @@ function MedicineForm({
   all: any[];
   onSave: (m: any, r: Regimen, f?: File) => Promise<void>;
 }) {
-  const [step, setStep] = useState(0),
-    [error, setError] = useState(""),
-    [file, setFile] = useState<File>();
-  const [m, setM] = useState(
+  const L = (th: string, en: string) => (lang === "th" ? th : en);
+  const editing = Boolean(medicine.data);
+  const start = medicine.proposed || regimen;
+  const [error, setError] = useState(""),
+    [note, setNote] = useState(""),
+    [busy, setBusy] = useState(false),
+    [file, setFile] = useState<File>(),
+    [preview, setPreview] = useState("");
+  const [m, setM] = useState<any>(
     medicine.data || {
       name: "",
       generic: "",
@@ -2334,552 +2395,622 @@ function MedicineForm({
       verified: false,
     },
   );
-  const [r, setR] = useState<any>(
-    medicine.proposed || {
-      ...regimen,
-      status: regimen?.status || "draft",
-      instructions: regimen?.instructions || "",
-      food: regimen?.food || "",
-      route: regimen?.route || "",
-      timezone: regimen?.timezone || "Asia/Bangkok",
-      start:
-        regimen?.start || DateTime.now().setZone("Asia/Bangkok").toISODate(),
-      end: regimen?.end,
-      slots: regimen?.slots || [],
-      confirmed: false,
-      source: regimen?.source || "",
-      reason: "",
-      effectiveAt: new Date().toISOString(),
-      effectiveMode: "on-commit",
-    },
-  );
+  const [r, setR] = useState<any>({
+    instructions: "",
+    food: "",
+    route: "",
+    timezone: "Asia/Bangkok",
+    start: DateTime.now().setZone("Asia/Bangkok").toISODate(),
+    source: "",
+    ...start,
+    slots: (start?.slots || []).map((s: any) => ({
+      ...s,
+      meal: s.meal || mealOf(s.time),
+    })),
+    confirmed: false,
+    reason: editing ? L("แก้ไขข้อมูลยา", "Updated medicine details") : "",
+    effectiveAt: new Date().toISOString(),
+    effectiveMode: "on-commit",
+  });
+  const [asNeeded, setAsNeeded] = useState(start?.status === "as-needed"),
+    [amount, setAmountState] = useState<string>(
+      start?.slots?.[0]?.amount || "",
+    ),
+    [unit, setUnitState] = useState<string>(start?.slots?.[0]?.unit || ""),
+    [days, setDays] = useState<number[]>(
+      start?.slots?.[0]?.weekdays || [1, 2, 3, 4, 5, 6, 7],
+    ),
+    [someDays, setSomeDays] = useState(
+      (start?.slots?.[0]?.weekdays?.length || 7) < 7,
+    );
   useEffect(() => {
     db.drafts.get(medicine.id).then((d) => {
-      if (d && !medicine.proposed) {
+      if (d && !medicine.proposed && d.value.v === 2) {
         setM(d.value.m);
         setR(d.value.r);
+        setAmountState(d.value.amount);
+        setUnitState(d.value.unit);
+        setAsNeeded(d.value.asNeeded);
+        setDays(d.value.days);
+        setSomeDays(d.value.days.length < 7);
         if (d.value.file) setFile(d.value.file);
       }
     });
   }, []);
+  useEffect(() => {
+    if (!file) return setPreview("");
+    const url = URL.createObjectURL(file);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+  const persist = async () => {
+    try {
+      await db.drafts.put({
+        id: medicine.id,
+        value: { v: 2, m, r, amount, unit, asNeeded, days, file },
+      });
+    } catch {
+      setError(
+        L(
+          "บันทึกแบบร่างในเครื่องไม่สำเร็จ",
+          "Could not keep a draft on this phone",
+        ),
+      );
+    }
+  };
   const updateM = (key: string, v: any) =>
     setM((old: any) => ({ ...old, [key]: v }));
   const updateR = (key: string, v: any) =>
     setR((old: any) => ({ ...old, [key]: v }));
-  const persist = async () => {
+  const setSlots = (fn: (slots: any[]) => any[]) =>
+    setR((old: any) => ({ ...old, slots: fn(old.slots) }));
+  const setAmount = (v: string) => {
+    setAmountState(v);
+    setSlots((slots) => slots.map((s) => ({ ...s, amount: v })));
+  };
+  const setUnit = (v: string) => {
+    setUnitState(v);
+    setSlots((slots) => slots.map((s) => ({ ...s, unit: v })));
+    const derived = formForUnit(v);
+    updateM("form", derived.form);
+    setR((old: any) =>
+      !old.route || old.autoRoute
+        ? { ...old, route: derived.route[lang], autoRoute: true }
+        : old,
+    );
+  };
+  const setFood = (food: string) =>
+    setR((old: any) => ({
+      ...old,
+      food,
+      // Meal times still at their usual clock time follow the food choice.
+      slots: old.slots.map((s: any) =>
+        s.meal && s.time === mealTime(s.meal, old.food)
+          ? { ...s, time: mealTime(s.meal, food) }
+          : s,
+      ),
+    }));
+  const setWeekdays = (next: number[]) => {
+    setDays(next);
+    setSlots((slots) => slots.map((s) => ({ ...s, weekdays: next })));
+  };
+  const newSlot = (meal?: Meal, time = "") => ({
+    id: crypto.randomUUID(),
+    time: meal ? mealTime(meal, r.food) : time,
+    amount,
+    unit,
+    weekdays: days,
+    meal,
+  });
+  const toggleMeal = (meal: Meal) =>
+    setSlots((slots) =>
+      slots.some((s) => s.meal === meal)
+        ? slots.filter((s) => s.meal !== meal)
+        : [...slots, newSlot(meal)],
+    );
+  const applyLabel = (text: string) => {
+    const fill = readLabel(text);
+    const found: string[] = [];
+    if (fill.unit && !unit) {
+      setUnit(fill.unit);
+      found.push(fill.unit);
+    }
+    if (fill.amount && !amount) {
+      setAmount(fill.amount);
+      found.push(L("ครั้งละ ", "") + fill.amount);
+    }
+    if (fill.food && !r.food) {
+      setFood(fill.food);
+      found.push(fill.food);
+    }
+    if (fill.asNeeded && !asNeeded) {
+      setAsNeeded(true);
+      found.push(t.prn);
+    }
+    if (fill.interval && !r.prnInterval) updateR("prnInterval", fill.interval);
+    if (fill.route && (!r.route || r.autoRoute)) {
+      setR((old: any) => ({ ...old, route: fill.route, autoRoute: false }));
+      found.push(fill.route);
+    }
+    if (fill.meals && !r.slots.length && !fill.asNeeded) {
+      const food = fill.food || r.food;
+      setR((old: any) => ({
+        ...old,
+        slots: fill.meals!.map((meal) => ({
+          id: crypto.randomUUID(),
+          time: mealTime(meal, food),
+          amount: fill.amount || amount,
+          unit: fill.unit || unit,
+          weekdays: days,
+          meal,
+        })),
+      }));
+      found.push(fill.meals.map((x) => mealNames[lang][x]).join(" "));
+    }
+    setNote(
+      found.length
+        ? L("✨ เติมให้จากฉลาก: ", "✨ Filled from the label: ") +
+            found.join(" · ") +
+            L(" — โปรดตรวจสอบ", " — please check")
+        : "",
+    );
+  };
+  const route = r.route || formForUnit(unit).route[lang];
+  const slots = [...r.slots].sort((a, b) => a.time.localeCompare(b.time));
+  const summary = [
+    m.name && m.name + (m.strength ? " " + m.strength : ""),
+    amount && unit
+      ? `${route} ${L("ครั้งละ", "")} ${amount} ${unit}`.replace(/\s+/g, " ")
+      : "",
+    asNeeded
+      ? L("เมื่อมีอาการ", "when needed")
+      : slots.length
+        ? L(`วันละ ${slots.length} ครั้ง`, `${slots.length} times a day`)
+        : "",
+    r.food,
+    asNeeded
+      ? ""
+      : slots
+          .map(
+            (s) =>
+              (s.meal ? mealNames[lang][s.meal as Meal] + " " : "") + s.time,
+          )
+          .join(", "),
+    !asNeeded && slots.length ? weekdaysText(days, lang) : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const keepStatus = ["paused", "stopped", "reference"].includes(
+    regimen?.status,
+  )
+    ? regimen.status
+    : undefined;
+  const sameName = all.find(
+    (a) =>
+      a.id !== medicine.id &&
+      m.name.trim() &&
+      a.data.name.trim().toLowerCase() === m.name.trim().toLowerCase(),
+  );
+  const save = async (asDraft: boolean) => {
+    setError("");
     try {
-      await db.drafts.put({ id: medicine.id, value: { m, r, file } });
-    } catch {
-      setError(
-        lang === "th"
-          ? "บันทึกแบบร่างไม่สำเร็จ กรุณาเก็บคำแนะนำเดิมไว้"
-          : "Draft storage failed. Keep original instructions.",
+      if (!m.name.trim())
+        throw new Error(L("กรุณาใส่ชื่อยา", "Enter the medicine name"));
+      if (!asDraft) {
+        if (!amount || !unit)
+          throw new Error(
+            L(
+              "กรุณาเลือกปริมาณและหน่วยที่ใช้ต่อครั้ง",
+              "Choose the amount and unit per dose",
+            ),
+          );
+        if (!asNeeded && !slots.length)
+          throw new Error(
+            L(
+              "กรุณาเลือกเวลาใช้ยาอย่างน้อย 1 เวลา",
+              "Choose at least one time",
+            ),
+          );
+        if (!r.confirmed)
+          throw new Error(
+            L(
+              "กรุณาติ๊กยืนยันว่าข้อมูลตรงกับฉลากหรือใบสั่งยา",
+              "Tick the box to confirm the details match the label or prescription",
+            ),
+          );
+      }
+      const generated = summary.replace(
+        m.name + (m.strength ? " " + m.strength : "") + " · ",
+        "",
       );
+      const med = medicationSchema.parse({
+        ...m,
+        name: m.name.trim(),
+        route,
+      });
+      const reg = regimenSchema.parse({
+        ...r,
+        status: asDraft
+          ? "draft"
+          : keepStatus || (asNeeded ? "as-needed" : "active"),
+        route,
+        instructions: (r.instructions || "").trim() || generated,
+        slots: asNeeded
+          ? []
+          : slots.map(({ meal, ...s }: any) => ({
+              ...s,
+              amount: s.amount || amount,
+              unit,
+            })),
+        end: r.end || undefined,
+      });
+      setBusy(true);
+      await onSave(med, reg, file);
+    } catch (e: any) {
+      setError(friendlyError(e, lang));
+    } finally {
+      setBusy(false);
     }
   };
-  const field = (label: string, key: string, target = "m", type = "text") => (
+  const chip = (
+    on: boolean,
+    label: string,
+    onClick: () => void,
+    key?: string,
+  ) => (
+    <button
+      type="button"
+      key={key || label}
+      className={on ? "chip on" : "chip"}
+      aria-pressed={on}
+      onClick={onClick}
+    >
+      {label}
+    </button>
+  );
+  const text = (
+    label: string,
+    value: string,
+    set: (v: string) => void,
+    extra: any = {},
+  ) => (
     <label>
       {label}
       <input
-        type={type}
-        value={(target === "m" ? m : r)[key] || ""}
-        onChange={(e) =>
-          target === "m"
-            ? updateM(key, e.target.value)
-            : updateR(key, e.target.value)
-        }
+        value={value || ""}
+        onChange={(e) => set(e.target.value)}
         onBlur={persist}
+        {...extra}
       />
     </label>
   );
-  const L = (th: string, en: string) => (lang === "th" ? th : en);
-  const steps = [t.photo, t.name, t.amount, t.time, t.review];
-  const setSlot = (i: number, patch: any) =>
-    updateR(
-      "slots",
-      r.slots.map((x: any, j: number) => (j === i ? { ...x, ...patch } : x)),
-    );
-  const localEffective = DateTime.fromISO(r.effectiveAt || "");
   return (
     <form
-      onSubmit={async (e) => {
+      className="med-form"
+      onSubmit={(e) => {
         e.preventDefault();
-        setError("");
-        if (step < 4) {
-          await persist();
-          setStep(step + 1);
-          return;
-        }
-        try {
-          const med = medicationSchema.parse(m),
-            reg = regimenSchema.parse({
-              ...r,
-              route: r.route || m.route,
-              end: r.end || undefined,
-            });
-          if (
-            all.some(
-              (a) =>
-                a.id !== medicine.id &&
-                a.data.name === m.name &&
-                a.data.strength === m.strength,
-            ) &&
-            !confirm(
-              L(
-                "อาจเป็นยาซ้ำ (ชื่อและความแรงเหมือนรายการที่มีอยู่) ต้องการบันทึกหรือไม่",
-                "Possible duplicate name/strength. Review before continuing. Save anyway?",
-              ),
-            )
-          )
-            return;
-          await onSave(med, reg, file);
-        } catch (e: any) {
-          setError(friendlyError(e, lang));
-        }
+        save(false);
       }}
     >
-      <p className="step-label">
-        {L("ขั้นตอน", "Step")} {step + 1} / 5 · <strong>{steps[step]}</strong>
-      </p>
-      <div className="stepper" aria-hidden>
-        {steps.map((_, i) => (
-          <span key={i} className={i <= step ? "done" : ""} />
-        ))}
+      <div className="photo-row">
+        {preview ? <img className="photo" src={preview} alt={t.photo} /> : null}
+        <label className="file-button">
+          📷 {L("ถ่ายรูปฉลาก", "Photo of label")}
+          <input
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={(e) => setFile(e.target.files?.[0])}
+          />
+        </label>
+        <label className="file-button">
+          🖼 {L("เลือกรูป", "Choose photo")}
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            onChange={(e) => setFile(e.target.files?.[0])}
+          />
+        </label>
       </div>
-      {step === 0 ? (
-        <>
-          <p>
-            {L(
-              "ถ่ายรูปกล่องยาหรือฉลากเพื่อช่วยจำ (ไม่บังคับ) กด “ถัดไป” เพื่อข้ามได้",
-              "Take a photo of the box or label to help recognise it (optional). Tap “Next” to skip.",
-            )}
-          </p>
-          <label className="file-button">
-            📷 {L("ถ่ายรูปด้วยกล้อง", "Take a photo")}
-            <input
-              type="file"
-              accept="image/*"
-              capture="environment"
-              onChange={(e) => setFile(e.target.files?.[0])}
-            />
-          </label>
-          <label className="file-button">
-            🖼 {t.photo} ({L("เลือกจากอัลบั้ม", "choose from album")})
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              onChange={(e) => setFile(e.target.files?.[0])}
-            />
-          </label>
-          {file && (
-            <p>
-              ✓ {L("เลือกรูปแล้ว", "Photo selected")}: {file.name}
-            </p>
+      {text(t.name, m.name, (v) => updateM("name", v), {
+        list: "medicine-names",
+        autoComplete: "off",
+        required: true,
+      })}
+      <datalist id="medicine-names">
+        {[...new Set([...all.map((a) => a.data.name), ...commonMedicines])].map(
+          (n) => (
+            <option key={n} value={n} />
+          ),
+        )}
+      </datalist>
+      {sameName && (
+        <p className="hint warn-text">
+          {L(
+            "มียาชื่อนี้อยู่แล้ว ตรวจสอบว่าไม่ซ้ำ",
+            "A medicine with this name already exists; check it is not a duplicate",
           )}
-          <p className="muted">
-            {L(
-              "รองรับ JPEG, PNG หรือ WebP ไม่เกิน 8 MB",
-              "JPEG, PNG or WebP, 8 MB maximum. HEIC: export as JPEG.",
-            )}
-          </p>
-        </>
-      ) : step === 1 ? (
-        <>
-          {field(t.name, "name")}
-          {field(
-            lang === "th" ? "ชื่อสามัญ (ถ้าทราบ)" : "Generic name (if known)",
-            "generic",
+        </p>
+      )}
+      {text(
+        L("ความแรง (ถ้ามี)", "Strength (if any)"),
+        m.strength,
+        (v) => updateM("strength", v),
+        {
+          placeholder: L("เช่น 5 mg", "e.g. 5 mg"),
+        },
+      )}
+      <label>
+        {L("ข้อความบนฉลากยา (ถ้ามี)", "Label wording (optional)")}
+        <textarea
+          rows={2}
+          value={r.instructions || ""}
+          placeholder={L(
+            "เช่น รับประทานครั้งละ 1 เม็ด วันละ 2 ครั้ง หลังอาหาร เช้า เย็น",
+            "e.g. Take 1 tablet twice a day after meals",
           )}
-          {field(
-            lang === "th" ? "ยี่ห้อ (ถ้าทราบ)" : "Brand (if known)",
-            "brand",
+          onChange={(e) => updateR("instructions", e.target.value)}
+          onBlur={(e) => {
+            applyLabel(e.target.value);
+            persist();
+          }}
+        />
+      </label>
+      {note && <p className="hint filled">{note}</p>}
+      <fieldset className="chips">
+        <legend>{L("ใช้ครั้งละ", "Each dose")}</legend>
+        <div className="chip-row">
+          {["1/2", "1", "2"].map((a) =>
+            chip(amount === a, a === "1/2" ? "½" : a, () => setAmount(a)),
           )}
-          {field(t.strength, "strength")}
-          <label>
-            {t.form}
-            <select
-              value={m.form}
-              onChange={(e) => updateM("form", e.target.value)}
-            >
-              {Object.keys(formNames.en).map((x) => (
-                <option key={x} value={x}>
-                  {formNames[lang][x]}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            {t.productType}
-            <select
-              value={m.productType}
-              onChange={(e) => updateM("productType", e.target.value)}
-            >
-              {Object.keys(productNames.en).map((x) => (
-                <option key={x} value={x}>
-                  {productNames[lang][x]}
-                </option>
-              ))}
-            </select>
-          </label>
-          {field(t.purpose + L(" (ไม่บังคับ)", " (optional)"), "purpose")}
-          {field(t.source + L(" (ไม่บังคับ)", " (optional)"), "source")}
-        </>
-      ) : step === 2 ? (
-        <>
-          {field(t.route, "route")}
-          <p className="hint">
-            {L(
-              "เช่น รับประทาน, หยอดตา, ทาผิว",
-              "e.g. by mouth, eye drops, on skin",
-            )}
-          </p>
-          {field(t.instructions, "instructions", "r")}
-          <p className="hint">
-            {L(
-              "คัดลอกข้อความจากฉลากหรือใบสั่งยา เช่น “รับประทานครั้งละ 1 เม็ด วันละ 2 ครั้ง”",
-              "Copy the words from the label or prescription.",
-            )}
-          </p>
-          {field(t.food, "food", "r")}
-          <p className="hint">
-            {L(
-              "เช่น หลังอาหาร, ก่อนอาหาร 30 นาที",
-              "e.g. after meals, 30 minutes before food",
-            )}
-          </p>
-          <p className="muted">
-            {L(
-              "แอปไม่คำนวณหรือแปลงขนาดยาให้ ใส่ตามที่ได้รับคำแนะนำ",
-              "Copy original instructions. The app does not convert concentrations or assess splitting suitability.",
-            )}
-          </p>
-        </>
-      ) : step === 3 ? (
-        <>
-          <label>
-            {t.status}
-            <select
-              value={r.status}
-              onChange={(e) => updateR("status", e.target.value)}
-            >
-              {[
-                "active",
-                "as-needed",
-                "draft",
-                "reference",
-                "paused",
-                "stopped",
-              ].map((x) => (
-                <option value={x} key={x}>
-                  {(t as any)[x] || x}
-                </option>
-              ))}
-            </select>
-          </label>
-          <p className="hint">{t.statusHelp}</p>
-          {r.slots.map((s: any, i: number) => (
-            <fieldset key={s.id} className="slot">
-              <legend>
-                {t.timeSlot} {i + 1}
-              </legend>
-              <label>
-                {t.time}
-                <input
-                  type="time"
-                  value={s.time}
-                  onChange={(e) => setSlot(i, { time: e.target.value })}
-                  onBlur={persist}
-                />
-              </label>
-              <div className="pair">
-                <label>
-                  {t.amount}
-                  <input
-                    inputMode="decimal"
-                    placeholder={L("เช่น 1 หรือ 0.5", "e.g. 1 or 0.5")}
-                    value={s.amount}
-                    onChange={(e) =>
-                      setSlot(i, { amount: e.target.value.trim() })
-                    }
-                    onBlur={persist}
-                  />
-                </label>
-                <label>
-                  {t.unit}
-                  <input
-                    list="dose-units"
-                    placeholder={L("เช่น เม็ด", "e.g. tablet")}
-                    value={s.unit}
-                    onChange={(e) => setSlot(i, { unit: e.target.value })}
-                    onBlur={persist}
-                  />
-                </label>
-              </div>
-              <div role="group" aria-label={t.weekdays} className="weekdays">
-                <span>{t.weekdays}</span>
-                {weekdayNames[lang].map((name, d) => {
-                  const on = s.weekdays.includes(d + 1);
-                  return (
-                    <button
-                      type="button"
-                      key={d}
-                      aria-pressed={on}
-                      className={on ? "day on" : "day"}
-                      onClick={() =>
-                        setSlot(i, {
-                          weekdays: on
-                            ? s.weekdays.filter((x: number) => x !== d + 1)
-                            : [...s.weekdays, d + 1].sort((a, b) => a - b),
-                        })
-                      }
-                    >
-                      {name}
-                    </button>
-                  );
-                })}
-                {s.weekdays.length < 7 && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setSlot(i, { weekdays: [1, 2, 3, 4, 5, 6, 7] })
-                    }
-                  >
-                    {t.everyDay}
-                  </button>
-                )}
-              </div>
+          <input
+            className="amount-input"
+            aria-label={t.amount}
+            inputMode="decimal"
+            placeholder={L("อื่น", "other")}
+            value={["1/2", "1", "2"].includes(amount) ? "" : amount}
+            onChange={(e) => setAmount(e.target.value.trim())}
+          />
+        </div>
+        <div className="chip-row">
+          {units[lang].map((u) => chip(unit === u, u, () => setUnit(u)))}
+          <input
+            className="amount-input"
+            aria-label={t.unit}
+            placeholder={L("หน่วยอื่น", "other unit")}
+            value={units[lang].includes(unit) ? "" : unit}
+            onChange={(e) => setUnit(e.target.value)}
+          />
+        </div>
+      </fieldset>
+      <fieldset className="chips">
+        <legend>{L("เวลาใช้ยา", "When")}</legend>
+        <div className="chip-row">
+          {MEALS.map((meal) =>
+            chip(
+              !asNeeded && r.slots.some((s: any) => s.meal === meal),
+              mealNames[lang][meal],
+              () => {
+                setAsNeeded(false);
+                toggleMeal(meal);
+              },
+            ),
+          )}
+          {chip(asNeeded, "🩹 " + t.prn, () => setAsNeeded(!asNeeded))}
+        </div>
+        {!asNeeded &&
+          slots.map((s) => (
+            <div className="slot-row" key={s.id}>
+              <span>
+                {s.meal ? mealNames[lang][s.meal as Meal] : L("เวลา", "Time")}
+              </span>
+              <input
+                type="time"
+                aria-label={t.time}
+                value={s.time}
+                onChange={(e) =>
+                  setSlots((list) =>
+                    list.map((x) =>
+                      x.id === s.id ? { ...x, time: e.target.value } : x,
+                    ),
+                  )
+                }
+              />
+              <input
+                className="amount-input"
+                aria-label={t.amount + " " + s.time}
+                inputMode="decimal"
+                value={s.amount}
+                onChange={(e) =>
+                  setSlots((list) =>
+                    list.map((x) =>
+                      x.id === s.id
+                        ? { ...x, amount: e.target.value.trim() }
+                        : x,
+                    ),
+                  )
+                }
+              />
               <button
                 type="button"
                 className="link-button"
+                aria-label={t.removeTime + " " + s.time}
                 onClick={() =>
-                  updateR(
-                    "slots",
-                    r.slots.filter((_: any, j: number) => j !== i),
-                  )
+                  setSlots((list) => list.filter((x) => x.id !== s.id))
                 }
               >
-                {t.removeTime}
-              </button>
-            </fieldset>
-          ))}
-          <datalist id="dose-units">
-            {(lang === "th"
-              ? [
-                  "เม็ด",
-                  "แคปซูล",
-                  "มล.",
-                  "ช้อนชา",
-                  "หยด",
-                  "พ่น",
-                  "ยูนิต",
-                  "ซอง",
-                ]
-              : [
-                  "tablet",
-                  "capsule",
-                  "mL",
-                  "teaspoon",
-                  "drop",
-                  "puff",
-                  "unit",
-                  "sachet",
-                ]
-            ).map((u) => (
-              <option key={u} value={u} />
-            ))}
-          </datalist>
-          <button
-            type="button"
-            className="add-slot"
-            onClick={() =>
-              updateR("slots", [
-                ...r.slots,
-                {
-                  id: crypto.randomUUID(),
-                  time: "",
-                  amount: "",
-                  unit: "",
-                  weekdays: [1, 2, 3, 4, 5, 6, 7],
-                },
-              ])
-            }
-          >
-            ＋ {t.addTime}
-          </button>
-          {r.status === "as-needed" && (
-            <>
-              {field(
-                L(
-                  "ใช้เมื่อมีอาการ (ถ้าแพทย์ระบุ)",
-                  "Clinician indication (if supplied)",
-                ),
-                "prnIndication",
-                "r",
-              )}
-              {field(
-                L("ห่างกันอย่างน้อย (ถ้าระบุ)", "Interval (if supplied)"),
-                "prnInterval",
-                "r",
-              )}
-              {field(
-                L("สูงสุดต่อวัน (ถ้าระบุ)", "Maximum (if supplied)"),
-                "prnMaximum",
-                "r",
-              )}
-              <p className="muted">
-                {L(
-                  "ยาที่ใช้เมื่อจำเป็นจะไม่มีการแจ้งเตือนตามเวลา และแอปไม่คำนวณความปลอดภัย",
-                  "No routine reminders; no safety calculations.",
-                )}
-              </p>
-            </>
-          )}
-          <details className="advanced">
-            <summary>{L("ตั้งค่าเพิ่มเติม", "More options")}</summary>
-            {field(t.start, "start", "r", "date")}
-            {field(
-              t.end + L(" (ไม่บังคับ)", " (optional)"),
-              "end",
-              "r",
-              "date",
-            )}
-            {field(t.timezone, "timezone", "r")}
-            <label>
-              {t.effective}
-              <select
-                value={r.effectiveMode || "at-time"}
-                onChange={(e) => updateR("effectiveMode", e.target.value)}
-              >
-                <option value="on-commit">
-                  {L("ทันทีเมื่อเซิร์ฟเวอร์ยืนยัน", "When the server confirms")}
-                </option>
-                <option value="at-time">
-                  {L("วันที่และเวลาที่เลือก", "Selected date and time")}
-                </option>
-              </select>
-            </label>
-            {r.effectiveMode !== "on-commit" && (
-              <label>
-                {t.effective} ({L("เวลาของโทรศัพท์", "phone time")})
-                <input
-                  type="datetime-local"
-                  value={
-                    localEffective.isValid
-                      ? localEffective.toLocal().toFormat("yyyy-MM-dd'T'HH:mm")
-                      : ""
-                  }
-                  onChange={(e) => {
-                    const d = new Date(e.target.value);
-                    if (!isNaN(d.getTime()))
-                      updateR("effectiveAt", d.toISOString());
-                  }}
-                />
-              </label>
-            )}
-          </details>
-        </>
-      ) : (
-        <>
-          <h3>
-            {m.name || "—"}
-            {m.strength ? " · " + m.strength : ""}
-          </h3>
-          {medicine.data && regimen && (
-            <p className="muted">
-              {L("ก่อนแก้ไข", "Before")}: {regimen.instructions} ·{" "}
-              {regimen.slots
-                .map((s: any) => s.time + " " + s.amount + " " + s.unit)
-                .join(", ")}
-            </p>
-          )}
-          <dl className="review">
-            <dt>{t.instructions}</dt>
-            <dd>{r.instructions || "—"}</dd>
-            <dt>{t.route}</dt>
-            <dd>{r.route || m.route || "—"}</dd>
-            <dt>{t.food}</dt>
-            <dd>{r.food || "—"}</dd>
-            <dt>{t.time}</dt>
-            <dd>
-              {r.slots.length
-                ? r.slots.map((s: any) => (
-                    <div key={s.id}>
-                      🕒 {s.time || "—"} · {s.amount || "—"} {s.unit} ·{" "}
-                      {weekdaysText(s.weekdays, lang)}
-                    </div>
-                  ))
-                : "—"}
-            </dd>
-            <dt>{t.status}</dt>
-            <dd>{(t as any)[r.status] || r.status}</dd>
-            <dt>{L("ช่วงเวลา", "Dates")}</dt>
-            <dd>
-              {day(r.start, lang)} — {r.end ? day(r.end, lang) : "…"}
-            </dd>
-          </dl>
-          {r.status === "draft" && r.slots.length > 0 && (
-            <div className="warning">
-              <p>
-                {L(
-                  "ยานี้ยังเป็น “แบบร่าง” จึงจะไม่มีการแจ้งเตือนตามเวลา",
-                  "This medicine is still a “Draft”, so there will be no reminders.",
-                )}
-              </p>
-              <button type="button" onClick={() => updateR("status", "active")}>
-                🔔{" "}
-                {L(
-                  "ตั้งเป็น “ใช้อยู่” เพื่อรับการแจ้งเตือน",
-                  "Set to “Active” to get reminders",
-                )}
+                ✕
               </button>
             </div>
-          )}
-          {field(t.source, "source", "r")}
-          {field(
-            L("เหตุผลที่เปลี่ยน (ถ้ามี)", "Reason for change"),
-            "reason",
-            "r",
-          )}
-          <label className="check confirm-box">
-            <input
-              type="checkbox"
-              checked={r.confirmed}
-              onChange={(e) => updateR("confirmed", e.target.checked)}
-            />
-            {t.confirm}
-          </label>
-          <p className="muted">
-            {L(
-              "เป็นการยืนยันของผู้ป่วย ไม่ใช่การตรวจสอบโดยผู้เชี่ยวชาญ",
-              "This is patient confirmation, not professional verification.",
+          ))}
+        {!asNeeded && (
+          <button
+            type="button"
+            className="link-button"
+            onClick={() =>
+              setSlots((list) => [...list, newSlot(undefined, "")])
+            }
+          >
+            ＋ {L("เวลาอื่น", "Another time")}
+          </button>
+        )}
+      </fieldset>
+      {!asNeeded && (
+        <fieldset className="chips">
+          <legend>{t.food}</legend>
+          <div className="chip-row">
+            {foodOptions[lang].map((f) =>
+              chip(r.food === f, f, () => setFood(r.food === f ? "" : f)),
             )}
-          </p>
-        </>
+          </div>
+          <div className="chip-row">
+            {chip(!someDays, t.everyDay, () => {
+              setSomeDays(false);
+              setWeekdays([1, 2, 3, 4, 5, 6, 7]);
+            })}
+            {chip(someDays, L("บางวัน", "Some days"), () => setSomeDays(true))}
+          </div>
+          {someDays && (
+            <div className="chip-row" role="group" aria-label={t.weekdays}>
+              {weekdayNames[lang].map((name, d) =>
+                chip(
+                  days.includes(d + 1),
+                  name,
+                  () =>
+                    setWeekdays(
+                      days.includes(d + 1)
+                        ? days.filter((x) => x !== d + 1)
+                        : [...days, d + 1].sort((a, b) => a - b),
+                    ),
+                  "day" + d,
+                ),
+              )}
+            </div>
+          )}
+        </fieldset>
       )}
+      {asNeeded &&
+        text(
+          L("ใช้เมื่อ (ถ้าแพทย์ระบุ)", "Use when (if stated)"),
+          r.prnIndication,
+          (v) => updateR("prnIndication", v),
+        )}
+      <details className="advanced">
+        <summary>
+          {L("ข้อมูลเพิ่มเติม (ไม่บังคับ)", "More details (optional)")}
+        </summary>
+        {text(L("ชื่อสามัญ", "Generic name"), m.generic, (v) =>
+          updateM("generic", v),
+        )}
+        {text(L("ยี่ห้อ", "Brand"), m.brand, (v) => updateM("brand", v))}
+        {text(t.purpose, m.purpose, (v) => updateM("purpose", v), {
+          placeholder: L("เช่น ความดัน เบาหวาน", "e.g. blood pressure"),
+        })}
+        <label>
+          {t.productType}
+          <select
+            value={m.productType}
+            onChange={(e) => updateM("productType", e.target.value)}
+          >
+            {Object.keys(productNames.en).map((x) => (
+              <option key={x} value={x}>
+                {productNames[lang][x]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          {t.form}
+          <select
+            value={m.form}
+            onChange={(e) => updateM("form", e.target.value)}
+          >
+            {Object.keys(formNames.en).map((x) => (
+              <option key={x} value={x}>
+                {formNames[lang][x]}
+              </option>
+            ))}
+          </select>
+        </label>
+        {text(t.route, r.route || route, (v) =>
+          setR((old: any) => ({ ...old, route: v, autoRoute: false })),
+        )}
+        {asNeeded && (
+          <>
+            {text(
+              L("ห่างกันอย่างน้อย (ถ้าระบุ)", "Interval (if stated)"),
+              r.prnInterval,
+              (v) => updateR("prnInterval", v),
+            )}
+            {text(
+              L("สูงสุดต่อวัน (ถ้าระบุ)", "Maximum (if stated)"),
+              r.prnMaximum,
+              (v) => updateR("prnMaximum", v),
+            )}
+          </>
+        )}
+        {text(t.start, r.start, (v) => updateR("start", v), { type: "date" })}
+        {text(
+          t.end + L(" (ถ้ามี)", " (optional)"),
+          r.end,
+          (v) => updateR("end", v),
+          {
+            type: "date",
+          },
+        )}
+        {text(
+          L("ได้รับยาจาก", "Prescribed by / source"),
+          r.source,
+          (v) => updateR("source", v),
+          {
+            placeholder: L(
+              "เช่น รพ. / คลินิก / ร้านยา",
+              "e.g. hospital, clinic, pharmacy",
+            ),
+          },
+        )}
+        {text(t.timezone, r.timezone, (v) => updateR("timezone", v))}
+      </details>
+      {summary && (
+        <p className="summary-line" aria-live="polite">
+          {summary}
+        </p>
+      )}
+      {keepStatus && (
+        <p className="hint">
+          {L("สถานะยังคงเป็น", "Status stays")}: {statusLabel(keepStatus, lang)}
+        </p>
+      )}
+      {editing &&
+        text(L("เหตุผลที่แก้ไข", "Reason for change"), r.reason, (v) =>
+          updateR("reason", v),
+        )}
+      <label className="check confirm-box">
+        <input
+          type="checkbox"
+          checked={r.confirmed}
+          onChange={(e) => updateR("confirmed", e.target.checked)}
+        />
+        {t.confirm}
+      </label>
       {error && (
         <p role="alert" className="warning">
           {error}
         </p>
       )}
-      <div className="actions form-nav">
-        {step > 0 && (
-          <button type="button" onClick={() => setStep(step - 1)}>
-            ← {t.back}
-          </button>
-        )}
-        <button className="primary">{step === 4 ? t.save : t.next}</button>
-      </div>
+      <button className="primary save-button" disabled={busy}>
+        {busy ? t.loading : "✓ " + t.save}
+      </button>
       <button
         type="button"
         className="link-button"
-        onClick={async () => {
-          await persist();
-          setError(
-            L("บันทึกแบบร่างในโทรศัพท์นี้แล้ว", "Draft saved on this phone"),
-          );
-        }}
+        disabled={busy}
+        onClick={() => save(true)}
       >
-        {L("บันทึกแบบร่างไว้ก่อน", "Save draft for later")}
+        {L(
+          "บันทึกเป็นแบบร่าง (ยังไม่แจ้งเตือน)",
+          "Save as draft (no reminders yet)",
+        )}
       </button>
     </form>
   );
