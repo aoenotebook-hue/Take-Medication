@@ -53,6 +53,24 @@ The API uses explicit `.js` import paths and its own Node-only TypeScript config
 
 ## Deploy and check
 
+### Recover a deployment with missing backend settings
+
+The frontend Supabase variables alone do not configure the API. If runtime logs list missing `PUBLIC_APP_URL`, `DATABASE_URL`, VAPID keys, `VAPID_SUBJECT`, `PUSH_ENCRYPTION_KEY` and `CRON_SECRET`, prepare the remaining settings locally:
+
+```sh
+npm run prepare:vercel-env
+npm run build:bootstrap
+```
+
+The first command creates two ignored, private files with permission `600`. It refuses to overwrite existing files, so subsequent runs cannot silently rotate encryption or push keys. Keep both files private and retain the keys for future deployments.
+
+1. Edit `.env.vercel-missing`: replace only the `DATABASE_URL` placeholder with the selected project's pooled PostgreSQL connection string from Supabase **Connect**. Use the dedicated runtime role when already provisioned; the database password is different from an API key. Percent-encode special characters in the password. Never paste the connection string into chat or commit it.
+2. In the selected Supabase project's SQL editor, run `deploy/supabase-bootstrap.sql`. It applies missing migrations 001–007 in one transaction and skips recorded migrations. It does not seed patient data. Ensure Storage has a private `medication-photos` bucket with a 2 MB JPEG upload limit.
+3. Import `.env.vercel-missing` into Vercel's **Production** environment variables, preserving the existing Supabase service and frontend variables. Redeploy production with the new settings.
+4. Open `/api/health`. Once it confirms database connectivity, run the private `.env.supabase-reminders.sql` in the same Supabase SQL editor. This stores the scheduler credential in Vault and installs the reminder and retention jobs. Verify a subsequent worker heartbeat and Cron HTTP results as described below.
+
+These files make the dashboard configuration concrete; generating them does not configure the providers or prove live health. The bootstrap SQL does not replace the dedicated runtime-role provisioning described above.
+
 Use an exact source commit whose **Verification** workflow passed. Put its full SHA in `DEPLOY_COMMIT`; do not use a moving branch name.
 
 ```sh

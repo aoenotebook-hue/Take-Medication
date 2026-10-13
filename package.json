@@ -13,6 +13,8 @@
     "build": "vite build --config apps/web/vite.config.ts",
     "build:vercel": "node --import tsx scripts/vercel-build.ts",
     "configure:hosted": "node --import tsx scripts/configure-hosted.ts",
+    "prepare:vercel-env": "node scripts/prepare-vercel-env.mjs",
+    "build:bootstrap": "node scripts/build-bootstrap.mjs",
     "check:live": "node --import tsx scripts/check-live.ts",
     "deploy:hosted": "node --import tsx scripts/deploy-hosted.ts",
     "start:api": "tsx apps/api/src/server.ts",
