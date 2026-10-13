@@ -147,6 +147,50 @@ async function issueSession(phone: string) {
     user_id: data.session.user.id,
   };
 }
+/** Deletes a Supabase account that uses this phone's address but was never bound to a PIN. */
+async function removeUnboundAccount(phone: string) {
+  const other = (
+    await pool
+      .query("SELECT id FROM auth.users WHERE lower(email)=lower($1)", [
+        phoneEmail(phone),
+      ])
+      .catch(() => ({ rows: [] as any[] }))
+  ).rows[0]?.id;
+  if (!other) return false;
+  const bound = (
+    await pool.query(
+      "SELECT 1 FROM pin_credentials WHERE user_id=$1 UNION ALL SELECT 1 FROM account_deletions WHERE user_id=$1",
+      [other],
+    )
+  ).rowCount;
+  if (bound) return false;
+  await supabase().auth.admin.deleteUser(other);
+  return true;
+}
+/**
+ * The PIN was verified by this server, so the hidden provider account can be
+ * restored: recreated with the same id (keeping every record linked) if it was
+ * deleted in the Supabase dashboard, or given the expected password again.
+ */
+async function repairProviderAccount(phone: string, userId: string) {
+  const admin = supabase().auth.admin;
+  const attributes = {
+    email: phoneEmail(phone),
+    password: providerPassword(phone),
+    email_confirm: true,
+    user_metadata: { phone },
+  };
+  const { data } = await admin.getUserById(userId);
+  if (data?.user) {
+    await admin.updateUserById(userId, attributes);
+    return;
+  }
+  let created = await admin.createUser({ id: userId, ...attributes });
+  if (created.error && (await removeUnboundAccount(phone)))
+    created = await admin.createUser({ id: userId, ...attributes });
+  if (created.error)
+    throw new HttpError(503, "Sign-in service unavailable; try again");
+}
 app.post("/api/auth/pin/register", pinLimiter, async (req, res) => {
   const phone = normalizePhone(req.body?.phone);
   const pin = String(req.body?.pin ?? "");
@@ -177,24 +221,8 @@ app.post("/api/auth/pin/register", pinLimiter, async (req, res) => {
       } catch {
         // Someone created this address directly with the public key. It was
         // never bound to a PIN, so remove it (ending its sessions) and recreate.
-        const squatter = (
-          await pool
-            .query("SELECT id FROM auth.users WHERE lower(email)=lower($1)", [
-              phoneEmail(phone),
-            ])
-            .catch(() => ({ rows: [] as any[] }))
-        ).rows[0]?.id;
-        const bound =
-          squatter &&
-          (
-            await pool.query(
-              "SELECT 1 FROM pin_credentials WHERE user_id=$1 UNION ALL SELECT 1 FROM account_deletions WHERE user_id=$1",
-              [squatter],
-            )
-          ).rowCount;
-        if (!squatter || bound)
+        if (!(await removeUnboundAccount(phone)))
           throw new HttpError(503, "Sign-in service unavailable; try again");
-        await supabase().auth.admin.deleteUser(squatter);
         userId = (await create()).data?.user?.id;
         if (!userId)
           throw new HttpError(503, "Sign-in service unavailable; try again");
@@ -218,7 +246,13 @@ app.post("/api/auth/pin/register", pinLimiter, async (req, res) => {
   );
   if (!saved.rowCount)
     throw new HttpError(409, "This phone number is already registered");
-  res.json(await issueSession(phone));
+  try {
+    res.json(await issueSession(phone));
+  } catch {
+    // After an administrator PIN reset the provider account may be gone.
+    await repairProviderAccount(phone, userId!);
+    res.json(await issueSession(phone));
+  }
 });
 app.post("/api/auth/pin/login", pinLimiter, async (req, res) => {
   const phone = normalizePhone(req.body?.phone);
@@ -226,7 +260,12 @@ app.post("/api/auth/pin/login", pinLimiter, async (req, res) => {
     verifyPinAttempt(c, { phone }, String(req.body?.pin ?? "")),
   );
   if ("error" in result) throw result.error;
-  res.json(await issueSession(phone));
+  try {
+    res.json(await issueSession(phone));
+  } catch {
+    await repairProviderAccount(phone, result.userId);
+    res.json(await issueSession(phone));
+  }
 });
 app.use("/api", async (req, res, next) => {
   try {
