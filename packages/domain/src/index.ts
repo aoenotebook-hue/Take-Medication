@@ -50,6 +50,9 @@ export const regimenSchema = z
     prnIndication: z.string().optional(),
     prnInterval: z.string().optional(),
     prnMaximum: z.string().optional(),
+    // Dose per as-needed use, as written on the label (no scheduled slots).
+    prnAmount: z.string().max(50).optional(),
+    prnUnit: z.string().max(50).optional(),
   })
   .superRefine((r, c) => {
     if (r.end && r.end < r.start)

@@ -136,7 +136,7 @@ test("guided manual draft without photos and 200% layout", async ({
   await page.getByRole("button", { name: /บันทึกเป็นแบบร่าง/ }).click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await page.getByLabel("สถานะ", { exact: true }).selectOption("draft");
-  await expect(page.getByRole("heading", { name })).toBeVisible();
+  await expect(page.locator(".med-row", { hasText: name })).toBeVisible();
   await expect(
     page.getByText(
       "การเปลี่ยนแปลงบันทึกในโทรศัพท์นี้ การแจ้งเตือนจากเซิร์ฟเวอร์อาจยังใช้ตารางเดิมจนกว่าจะเชื่อมต่ออีกครั้ง",
@@ -160,7 +160,7 @@ test("guided manual draft without photos and 200% layout", async ({
   await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
   await context.setOffline(true);
   const downloadPromise = page.waitForEvent("download");
-  await page.getByRole("button", { name: "ส่งออก PDF" }).click();
+  await page.getByRole("button", { name: /ส่งหรือพิมพ์ PDF/ }).click();
   const download = await downloadPromise;
   await download.saveAs("test-results/offline-summary.pdf");
   await context.setOffline(false);
@@ -201,12 +201,13 @@ test("one-page entry fills chips from label wording and saves an active medicine
     page.getByText("เซิร์ฟเวอร์รับข้อมูลทั้งหมดแล้ว", { exact: false }),
   ).toBeVisible();
   const card = page.locator("article", { hasText: name });
-  await expect(card.getByText("ใช้อยู่")).toBeVisible();
-  await expect(card.getByText("08:00 · 1 เม็ด")).toBeVisible();
-  await expect(card.getByText("18:00 · 1 เม็ด")).toBeVisible();
+  await expect(
+    card.getByText(/เช้า 08:00 · เย็น 18:00 · ทุกวัน/),
+  ).toBeVisible();
+  await expect(card.getByText(/ครั้งละ 1 เม็ด · หลังอาหาร/)).toBeVisible();
   // Editing keeps the one-page form filled and records a reason automatically.
-  await card.getByRole("button", { name: "เปิดข้อมูลยา" }).click();
-  await page.getByRole("button", { name: /แก้ไขข้อมูลยา/ }).click();
+  await card.getByRole("button", { name: /เปิดข้อมูลยา/ }).click();
+  await page.getByRole("button", { name: /แก้ไขวิธีใช้/ }).click();
   const edit = page.getByRole("dialog");
   await expect(edit.getByLabel("ชื่อยา", { exact: true })).toHaveValue(name);
   await edit.getByRole("button", { name: "กลางวัน", exact: true }).click();
@@ -217,5 +218,59 @@ test("one-page entry fills chips from label wording and saves an active medicine
   await expect(
     page.getByText("เซิร์ฟเวอร์รับข้อมูลทั้งหมดแล้ว", { exact: false }),
   ).toBeVisible();
-  await expect(card.getByText("12:00 · 1 เม็ด")).toBeVisible();
+  await expect(card.getByText(/กลางวัน 12:00/)).toBeVisible();
+});
+test("delete a mistaken medicine, daily schedule view, and start over", async ({
+  page,
+}) => {
+  page.on("dialog", (d) => d.accept());
+  const stamp = Date.now();
+  await page.goto("/");
+  await page.getByRole("button", { name: "ทดลองด้วยข้อมูลสมมติ" }).click();
+  await page.getByRole("button", { name: "ยาของฉัน", exact: true }).click();
+  for (const [name, meal] of [
+    ["Synthetic keep " + stamp, "เช้า"],
+    ["Synthetic mistake " + stamp, "ก่อนนอน"],
+  ]) {
+    await page.getByRole("button", { name: "เพิ่มยา" }).click();
+    const form = page.getByRole("dialog");
+    await form.getByLabel("ชื่อยา", { exact: true }).fill(name);
+    await form.getByRole("button", { name: "1", exact: true }).click();
+    await form.getByRole("button", { name: "เม็ด", exact: true }).click();
+    await form.getByRole("button", { name: meal, exact: true }).click();
+    await form.getByLabel("ข้อมูลนี้ตรงกับใบสั่งยา").check();
+    await form.getByRole("button", { name: /^✓ บันทึก$/ }).click();
+    await expect(page.getByRole("dialog")).not.toBeVisible();
+  }
+  await page.getByRole("button", { name: "ลองซิงค์อีกครั้ง" }).click();
+  await expect(
+    page.getByText("เซิร์ฟเวอร์รับข้อมูลทั้งหมดแล้ว", { exact: false }),
+  ).toBeVisible();
+  // Daily schedule groups medicines by clock time.
+  await page.getByRole("button", { name: "ตารางเวลาแต่ละวัน" }).click();
+  await expect(
+    page.getByRole("heading", { name: /08:00 · เช้า/ }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /21:00 · ก่อนนอน/ }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "ตามยา", exact: true }).click();
+  // Delete the one added by mistake.
+  await page
+    .getByRole("button", { name: "เปิดข้อมูลยา Synthetic mistake " + stamp })
+    .click();
+  await page.getByRole("button", { name: /ลบ \(เพิ่มผิด/ }).click();
+  const rowOf = (text: string) => page.locator(".med-row", { hasText: text });
+  await expect(rowOf("Synthetic mistake " + stamp)).toHaveCount(0);
+  await expect(rowOf("Synthetic keep " + stamp)).toBeVisible();
+  // Start over removes every medicine but keeps the profile.
+  await page.getByRole("button", { name: "การตั้งค่า", exact: true }).click();
+  await page
+    .getByRole("button", { name: /ลบรายการยาทั้งหมดและเริ่มใหม่/ })
+    .click();
+  await expect(rowOf("Synthetic keep " + stamp)).toHaveCount(0);
+  await expect(page.getByText("ยังไม่มีรายการยา").first()).toBeVisible();
+  await expect(
+    page.getByText("ผู้ป่วยตัวอย่าง / Demo patient").first(),
+  ).toBeVisible();
 });

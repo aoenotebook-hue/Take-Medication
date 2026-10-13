@@ -229,3 +229,108 @@ it("failed migration transaction rolls back completely", async () => {
     (await pool.query("SELECT to_regclass($1) table", [table])).rows[0].table,
   ).toBeNull();
 });
+it("removing medicines is patient-scoped, hides them and blocks later edits", async () => {
+  const deviceId = randomUUID();
+  const op = (
+    kind: string,
+    resourceId: string,
+    baseVersion: number,
+    data: any,
+  ) => ({
+    id: randomUUID(),
+    deviceId,
+    patientId: patient,
+    resourceId,
+    baseVersion,
+    kind,
+    clientAt: new Date().toISOString(),
+    data,
+  });
+  const medicine = (name: string) => ({
+    name,
+    generic: "",
+    brand: "",
+    strength: "",
+    form: "tablet",
+    route: "oral",
+    purpose: "",
+    productType: "prescription",
+    source: "",
+    verified: false,
+  });
+  const regimen = {
+    status: "active",
+    instructions: "Synthetic instructions",
+    food: "",
+    route: "oral",
+    timezone: "Asia/Bangkok",
+    start: "2026-01-01",
+    slots: [
+      {
+        id: "s1",
+        time: "08:00",
+        amount: "1",
+        unit: "tablet",
+        weekdays: [1, 2, 3, 4, 5, 6, 7],
+      },
+    ],
+    confirmed: true,
+    source: "",
+    reason: "",
+    effectiveAt: new Date().toISOString(),
+    effectiveMode: "on-commit",
+  };
+  const a = randomUUID(),
+    b = randomUUID();
+  const pushed = await request("/sync/push", "POST", {
+    operations: [
+      op("medication", a, 0, medicine("Synthetic remove A")),
+      op("regimen", a, 1, regimen),
+      op("medication", b, 0, medicine("Synthetic remove B")),
+    ],
+  });
+  expect((await pushed.json()).results.map((r: any) => r.status)).toEqual([
+    "acknowledged",
+    "acknowledged",
+    "acknowledged",
+  ]);
+  // Another patient's identifier is refused.
+  expect(
+    (await request("/patients/" + randomUUID() + "/medications/" + a, "DELETE"))
+      .status,
+  ).toBe(403);
+  expect(
+    (await request("/patients/" + patient + "/medications/" + a, "DELETE"))
+      .status,
+  ).toBe(200);
+  expect(
+    (await request("/patients/" + patient + "/medications/" + a, "DELETE"))
+      .status,
+  ).toBe(404);
+  const snap = await (
+    await request("/patients/" + patient + "/snapshot")
+  ).json();
+  expect(snap.medications.some((m: any) => m.id === a)).toBe(false);
+  expect(snap.occurrences.some((o: any) => o.medication_id === a)).toBe(false);
+  // A queued edit from an offline phone cannot revive it.
+  const late = await request("/sync/push", "POST", {
+    operations: [op("regimen", a, 3, regimen)],
+  });
+  expect((await late.json()).results[0].error).toBe(
+    "Medicine no longer exists",
+  );
+  // Reset needs the explicit confirmation word, then removes the rest.
+  expect(
+    (await request("/patients/" + patient + "/reset", "POST", {})).status,
+  ).toBe(422);
+  const reset = await request("/patients/" + patient + "/reset", "POST", {
+    confirm: "RESET",
+  });
+  expect(reset.status).toBe(200);
+  expect((await reset.json()).removed).toBeGreaterThanOrEqual(1);
+  const after = await (
+    await request("/patients/" + patient + "/snapshot")
+  ).json();
+  expect(after.medications).toEqual([]);
+  expect(after.profile.id).toBe(patient);
+});
