@@ -148,6 +148,8 @@ export async function applyOperation(actor: string, input: unknown) {
       if (row) {
         if (row.patient_id !== op.patientId)
           throw new HttpError(403, "Access denied");
+        if (row.deleted_at)
+          throw new HttpError(409, "Medicine no longer exists");
         if (row.version !== op.baseVersion)
           throw new HttpError(409, "Medication changed", row);
         const identityChanged = ["name", "strength", "form"].some(
@@ -184,6 +186,7 @@ export async function applyOperation(actor: string, input: unknown) {
         )
       ).rows[0];
       if (!med) throw new HttpError(404, "Medicine not found");
+      if (med.deleted_at) throw new HttpError(409, "Medicine no longer exists");
       if (med.version !== op.baseVersion)
         throw new HttpError(409, "Regimen changed", med);
       const latest = (
@@ -418,7 +421,7 @@ export async function snapshot(actor: string, patient: string) {
     ).rows;
     const occurrences = (
       await c.query(
-        "SELECT * FROM dose_occurrences WHERE patient_id=$1 AND intended_at BETWEEN now()-interval '30 days' AND now()+interval '30 days' ORDER BY intended_at",
+        "SELECT o.* FROM dose_occurrences o JOIN medications m ON m.id=o.medication_id AND m.deleted_at IS NULL WHERE o.patient_id=$1 AND o.intended_at BETWEEN now()-interval '30 days' AND now()+interval '30 days' ORDER BY o.intended_at",
         [patient],
       )
     ).rows;

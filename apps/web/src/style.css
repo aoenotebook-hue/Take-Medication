@@ -313,27 +313,6 @@ pre {
 .dose-detail article {
   margin: 0.3rem 0 0;
 }
-.install-guide {
-  list-style: none;
-  padding: 0;
-  display: grid;
-  gap: 0.6rem;
-}
-.install-guide li {
-  border: 1px solid #a8bcb0;
-  padding: 0.7rem;
-  border-radius: 12px;
-}
-.install-guide span {
-  display: inline-grid;
-  width: 44px;
-  height: 44px;
-  place-items: center;
-  background: #155e52;
-  color: white;
-  border-radius: 8px;
-  margin-right: 0.5rem;
-}
 .lead {
   font-size: 1.1rem;
 }
@@ -639,4 +618,261 @@ button.danger {
   background: #e4f1e9;
   color: #0f4d33;
   padding: 0.8rem;
+}
+.segmented {
+  display: flex;
+  border: 2px solid #155e52;
+  border-radius: 14px;
+  overflow: hidden;
+  margin: 0.6rem 0 0.8rem;
+}
+.segmented button {
+  flex: 1;
+  border: 0;
+  border-radius: 0;
+  min-height: 52px;
+  font-weight: 600;
+}
+.segmented [aria-pressed="true"] {
+  background: #155e52;
+  color: white;
+}
+.group-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 1.3rem;
+  margin: 1rem 0 0.4rem;
+  color: #155e52;
+}
+.group-done {
+  font-size: 0.85rem;
+  color: #0f6b45;
+}
+.all-done .dose-row {
+  opacity: 0.8;
+}
+.dose-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 0.8rem;
+  background: white;
+  border: 1px solid #cfdbd3;
+  border-radius: 14px;
+  padding: 0.7rem 0.8rem;
+  margin: 0.45rem 0;
+}
+.dose-row.late {
+  border-left: 6px solid #af580e;
+}
+.dose-row.status-taken,
+.dose-row.status-skipped {
+  background: #f3f6f4;
+}
+.dose-main {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+.dose-time {
+  font-weight: 700;
+  font-size: 1.2rem;
+  color: #155e52;
+}
+.dose-text {
+  display: grid;
+  min-width: 0;
+}
+.dose-what {
+  font-size: 1.05rem;
+}
+.late-text {
+  color: #8a4708;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.name-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  min-height: 44px;
+  text-align: left;
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: #193832;
+  text-decoration: underline dotted;
+}
+.dose-act {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.6rem;
+}
+.take {
+  min-width: 8rem;
+}
+.dose-links {
+  display: flex;
+  gap: 0.2rem;
+}
+.dose-links .link-button {
+  font-size: 0.9rem;
+  padding: 0 0.4rem;
+}
+.done-badge {
+  font-weight: 600;
+}
+.done-badge.taken {
+  color: #0f6b45;
+}
+.done-badge.skipped {
+  color: #5c6b65;
+}
+.snooze {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+.med-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  padding: 0;
+  overflow: hidden;
+}
+.med-row-main {
+  flex: 1;
+  display: grid;
+  gap: 0.15rem;
+  justify-items: start;
+  text-align: left;
+  border: 0;
+  border-radius: 0;
+  padding: 0.7rem 0.9rem;
+  min-width: 0;
+}
+.med-row-main strong {
+  font-size: 1.1rem;
+}
+.edit-btn {
+  border: 0;
+  border-left: 1px solid #cfdbd3;
+  border-radius: 0;
+  min-width: 5rem;
+  font-weight: 600;
+}
+.badge.status-paused,
+.badge.status-draft {
+  background: #fff4de;
+  color: #5c350d;
+}
+.badge.status-stopped {
+  background: #eceeed;
+  color: #3b4a44;
+}
+.detail-top {
+  display: flex;
+  gap: 0.8rem;
+  align-items: flex-start;
+}
+.detail-actions {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0.8rem 0;
+}
+.share-pdf {
+  width: 100%;
+  font-size: 1.1rem;
+  margin-bottom: 0.8rem;
+}
+.doctor-head {
+  background: white;
+  border: 1px solid #cfdbd3;
+  border-radius: 16px;
+  padding: 0.8rem 1rem;
+}
+.doctor-head h2 {
+  margin: 0;
+}
+.doctor-head p {
+  margin: 0.3rem 0;
+}
+.allergy {
+  background: #eef3f0;
+  border-radius: 10px;
+  padding: 0.4rem 0.6rem;
+}
+.allergy.known {
+  background: #fde7e4;
+  color: #7a1d12;
+}
+.section-title {
+  margin-top: 1.2rem;
+  color: #155e52;
+}
+.summary-item h3 {
+  margin: 0 0 0.2rem;
+}
+.summary-item p {
+  margin: 0.15rem 0;
+}
+.install-card {
+  position: relative;
+  background: #fffaf0;
+  border: 2px solid #e4c48a;
+  border-radius: 16px;
+  padding: 0.9rem 1rem;
+  margin: 0.8rem 0;
+}
+.install-card h2 {
+  font-size: 1.15rem;
+}
+.install-steps {
+  list-style: none;
+  counter-reset: step;
+  padding: 0;
+  margin: 0.5rem 0;
+  display: grid;
+  gap: 0.6rem;
+}
+.install-steps li {
+  display: flex;
+  gap: 0.7rem;
+  align-items: center;
+}
+.step-icon {
+  flex-shrink: 0;
+  display: inline-grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: white;
+  border: 1px solid #c9d6ce;
+  color: #0a64d8;
+}
+.step-icon.app-icon {
+  background: #155e52;
+  color: white;
+  font-size: 1.6rem;
+}
+.install-arrow {
+  text-align: center;
+  font-size: 1.6rem;
+  color: #af580e;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .install-arrow {
+    animation: nudge 1.4s ease-in-out infinite;
+  }
+}
+@keyframes nudge {
+  50% {
+    transform: translateY(6px);
+  }
 }

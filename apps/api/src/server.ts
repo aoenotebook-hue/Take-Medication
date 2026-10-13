@@ -799,6 +799,63 @@ app.delete("/api/account", async (req, res) => {
       "Tombstoned immediately; private records purged by documented retention job within 30 days; backups expire after 30 days.",
   });
 });
+// Removing medicines hides them from lists and reminders. Rows stay in the
+// database (append-only history and audit) and follow the retention policy.
+async function removeMedicines(
+  c: import("pg").PoolClient,
+  actor: string,
+  patient: string,
+  ids: string[],
+) {
+  if (!ids.length) return 0;
+  await c.query(
+    "UPDATE medications SET deleted_at=now(),version=version+1 WHERE patient_id=$1 AND id=ANY($2::uuid[]) AND deleted_at IS NULL",
+    [patient, ids],
+  );
+  await c.query(
+    "UPDATE dose_occurrences SET valid=false WHERE patient_id=$1 AND medication_id=ANY($2::uuid[]) AND intended_at>=now()",
+    [patient, ids],
+  );
+  await c.query(
+    "UPDATE reminder_jobs j SET state='cancelled' WHERE j.patient_id=$1 AND j.state IN ('queued','leased') AND EXISTS(SELECT 1 FROM dose_occurrences o WHERE o.id::text IN (SELECT jsonb_array_elements_text(j.occurrence_ids)) AND NOT o.valid)",
+    [patient],
+  );
+  await c.query(
+    "DELETE FROM schedule_issues WHERE patient_id=$1 AND medication_id=ANY($2::uuid[])",
+    [patient, ids],
+  );
+  for (const id of ids)
+    await audit(c, actor, patient, "medication-removed", id, true);
+  return ids.length;
+}
+app.delete("/api/patients/:id/medications/:medicationId", async (req, res) => {
+  const removed = await transaction(async (c) => {
+    await authorize(c, res.locals.user.id, req.params.id, "editor");
+    const found = await c.query(
+      "SELECT id FROM medications WHERE id=$1 AND patient_id=$2 AND deleted_at IS NULL FOR UPDATE",
+      [req.params.medicationId, req.params.id],
+    );
+    if (!found.rowCount) throw new HttpError(404, "Medicine not found");
+    return removeMedicines(c, res.locals.user.id, req.params.id, [
+      req.params.medicationId,
+    ]);
+  });
+  res.json({ removed });
+});
+app.post("/api/patients/:id/reset", async (req, res) => {
+  z.object({ confirm: z.literal("RESET") }).parse(req.body);
+  const removed = await transaction(async (c) => {
+    await authorize(c, res.locals.user.id, req.params.id, "owner");
+    const ids = (
+      await c.query(
+        "SELECT id FROM medications WHERE patient_id=$1 AND deleted_at IS NULL FOR UPDATE",
+        [req.params.id],
+      )
+    ).rows.map((r) => r.id);
+    return removeMedicines(c, res.locals.user.id, req.params.id, ids);
+  });
+  res.json({ removed });
+});
 app.use("/api", (_req, res) =>
   res.status(404).json({ error: "API route not found" }),
 );

@@ -14,7 +14,24 @@ import {
   type Regimen,
 } from "../../../packages/domain/src";
 import { db, clearPrivate, localView, type Snapshot } from "./storage";
-import { exportPdf, summaryRows, font } from "./pdf";
+import {
+  describe,
+  disclaimer,
+  exportPdf,
+  font,
+  summaryRows,
+  summarySections,
+} from "./pdf";
+import {
+  allergyLabel,
+  day,
+  formNames,
+  productNames,
+  statusLabel,
+  weekdayNames,
+  weekdaysText,
+  when,
+} from "./format";
 import { preparePhoto } from "./photo";
 import {
   commonMedicines,
@@ -59,69 +76,17 @@ async function api(path: string, body?: any, method = body ? "POST" : "GET") {
   return r.json();
 }
 let localSequence = Date.now() * 1000;
-const weekdayNames = {
-  th: ["จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส.", "อา."],
-  en: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-};
-const formNames: Record<Language, Record<string, string>> = {
-  th: {
-    tablet: "ยาเม็ด",
-    capsule: "แคปซูล",
-    liquid: "ยาน้ำ",
-    drops: "ยาหยอด",
-    injection: "ยาฉีด",
-    inhaler: "ยาสูดพ่น",
-    topical: "ยาใช้ภายนอก",
-    other: "อื่น ๆ",
-  },
-  en: {
-    tablet: "Tablet",
-    capsule: "Capsule",
-    liquid: "Liquid",
-    drops: "Drops",
-    injection: "Injection",
-    inhaler: "Inhaler",
-    topical: "Topical",
-    other: "Other",
-  },
-};
-const productNames: Record<Language, Record<string, string>> = {
-  th: {
-    prescription: "ยาตามใบสั่งแพทย์",
-    nonprescription: "ยาที่ซื้อเอง",
-    supplement: "อาหารเสริม / สมุนไพร",
-  },
-  en: {
-    prescription: "Prescription",
-    nonprescription: "Non-prescription",
-    supplement: "Supplement / herbal",
-  },
-};
-function weekdaysText(days: number[], lang: Language) {
-  if (days.length === 7) return words[lang].everyDay;
-  return [...days]
-    .sort((a, b) => a - b)
-    .map((d) => weekdayNames[lang][d - 1])
-    .join(" ");
-}
-function when(iso: string | undefined, lang: Language, zone = "Asia/Bangkok") {
-  if (!iso) return "—";
-  const d = DateTime.fromISO(iso, { zone });
-  return d.isValid
-    ? d.setLocale(lang).toLocaleString(DateTime.DATETIME_MED)
-    : iso;
-}
-function day(date: string | undefined, lang: Language) {
-  if (!date) return "—";
-  const d = DateTime.fromISO(date);
-  return d.isValid ? d.setLocale(lang).toLocaleString(DateTime.DATE_MED) : date;
-}
-function statusLabel(status: string, lang: Language) {
-  const t = words[lang] as Record<string, string>;
-  return status === "unconfirmed"
-    ? t.unconfirmed
-    : t[status + "Status"] || t[status] || status;
-}
+// Android/Chrome offer an install prompt; keep it for the install button.
+let installPrompt: any = null;
+const installListeners = new Set<() => void>();
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  installPrompt = e;
+  installListeners.forEach((f) => f());
+});
+const standalone = () =>
+  matchMedia("(display-mode: standalone)").matches ||
+  (navigator as any).standalone === true;
 // Plain-language messages for validation and sign-in errors instead of raw JSON.
 function friendlyError(e: any, lang: Language): string {
   const th = lang === "th";
@@ -310,10 +275,24 @@ function App() {
     [history, setHistory] = useState(false),
     [needsProfile, setNeedsProfile] = useState(false),
     [snoozing, setSnoozing] = useState(""),
+    [medView, setMedViewState] = useState<"time" | "medicine">(
+      localStorage.getItem("medicine-view") === "time" ? "time" : "medicine",
+    ),
+    [todayView, setTodayViewState] = useState<"time" | "medicine">(
+      localStorage.getItem("today-view") === "medicine" ? "medicine" : "time",
+    ),
     [prnFor, setPrnFor] = useState(""),
     [busy, setBusy] = useState(false);
   const t = words[lang];
   const L = (th: string, en: string) => (lang === "th" ? th : en);
+  const setMedView = (mode: "time" | "medicine") => {
+    setMedViewState(mode);
+    localStorage.setItem("medicine-view", mode);
+  };
+  const setTodayView = (mode: "time" | "medicine") => {
+    setTodayViewState(mode);
+    localStorage.setItem("today-view", mode);
+  };
   const syncing = useRef(false);
   const syncAgain = useRef<string | undefined>(undefined);
   useEffect(() => {
@@ -741,10 +720,7 @@ function App() {
             "This browser does not support reminders. ",
           ) + t.install,
         );
-      if (
-        /iPhone|iPad/.test(navigator.userAgent) &&
-        !matchMedia("(display-mode: standalone)").matches
-      )
+      if (/iPhone|iPad/.test(navigator.userAgent) && !standalone())
         throw new Error(t.install);
       const result = await Notification.requestPermission();
       setPermission(result);
@@ -986,6 +962,7 @@ function App() {
             {message}
           </p>
         )}
+        <InstallGuide lang={lang} />
         <details className="about">
           <summary>
             {L("ความเป็นส่วนตัวและข้อจำกัด", "Privacy and limits")}
@@ -1106,6 +1083,7 @@ function App() {
           </span>
           <button onClick={() => sync()}>{t.sync}</button>
         </div>
+        {view && tab === "today" && <InstallGuide lang={lang} />}
         {view?.scheduleIssues?.map((issue) => (
           <p key={issue.medication_id} className="warning">
             {L("ต้องตรวจสอบเวลาใช้ยา", "Schedule requires review")}:{" "}
@@ -1183,9 +1161,6 @@ function App() {
               .sort(
                 (a, b) => Date.parse(a.intended_at) - Date.parse(b.intended_at),
               );
-            const open = todays.filter(
-              (o) => !["taken", "skipped"].includes(statusOf(o).status),
-            );
             const done = todays.filter((o) =>
               ["taken", "skipped"].includes(statusOf(o).status),
             );
@@ -1202,8 +1177,15 @@ function App() {
             const nextGroup = next.filter(
               (o) => o.intended_at === next[0]?.intended_at,
             );
-            const groups = [...new Set(open.map((o) => o.local_time))];
-            const card = (o: any) => {
+            const takenAt = (o: any, heads: string[]) => {
+              const e = view.events.find((e) => heads.includes(e.id));
+              return e?.actual_at
+                ? DateTime.fromISO(e.actual_at)
+                    .setZone(o.timezone)
+                    .toFormat("HH:mm")
+                : "";
+            };
+            const row = (o: any, mode: "time" | "medicine") => {
               const m = view.medications.find((m) => m.id === o.medication_id),
                 r = s?.regimens.find((r) => r.id === o.regimen_id),
                 p = statusOf(o);
@@ -1214,39 +1196,43 @@ function App() {
                 (x) => x.kind === "regimen" && x.resourceId === m.id,
               );
               const locked = view.role === "viewer" || pendingRegimen;
+              const done = ["taken", "skipped"].includes(p.status);
               return (
-                <article
+                <div
                   key={o.id}
-                  className={"medicine-card status-" + p.status}
+                  className={
+                    "dose-row status-" + p.status + (late ? " late" : "")
+                  }
                 >
-                  <div className="card-body">
-                    <Photo
-                      photos={view.photos.filter(
-                        (p) => p.medication_id === m.id,
+                  <div className="dose-main">
+                    {mode === "medicine" && (
+                      <span className="dose-time">{o.local_time}</span>
+                    )}
+                    <div className="dose-text">
+                      {mode === "time" && (
+                        <button
+                          className="name-link"
+                          onClick={() => setDetail(m)}
+                        >
+                          {m.data.name}
+                          {m.data.strength ? " " + m.data.strength : ""}
+                        </button>
                       )}
-                    />
-                    <div>
-                      <h3>{m.data.name}</h3>
-                      {m.data.strength && <p>{m.data.strength}</p>}
-                      <p className="dose-amount">
+                      <span className="dose-what">
                         {o.data.amount} {o.data.unit}
-                        {r?.data.route ? " · " + r.data.route : ""}
-                      </p>
-                      {r?.data.food && <p>🍽 {r.data.food}</p>}
-                      {r?.data.instructions && (
-                        <p className="muted">{r.data.instructions}</p>
-                      )}
-                      <span className="badge">
-                        {statusLabel(p.status, lang)}
-                        {late ? " · " + L("เลยเวลาแล้ว", "past time") : ""}
+                        {r?.data.food ? " · " + r.data.food : ""}
                       </span>
+                      {late && (
+                        <span className="late-text">
+                          {L("เลยเวลาแล้ว", "Past time")}
+                        </span>
+                      )}
                     </div>
                   </div>
-                  {pendingRegimen && <p className="warning">{t.pending}</p>}
-                  <div className="actions">
+                  <div className="dose-act">
                     {p.status === "unconfirmed" ? (
                       snoozing === o.id ? (
-                        <>
+                        <div className="snooze">
                           <span>{t.snoozeChoose}</span>
                           {[10, 30].map((minutes) => (
                             <button
@@ -1265,52 +1251,46 @@ function App() {
                           <button onClick={() => setSnoozing("")}>
                             {t.cancel}
                           </button>
-                          <small>
-                            {L(
-                              "เป็นการเตือนซ้ำเท่านั้น ไม่ได้เปลี่ยนเวลาใช้ยา (สูงสุด 2 ครั้ง)",
-                              "Reminder only; it does not change the prescribed time (at most twice).",
-                            )}
-                          </small>
-                        </>
+                        </div>
                       ) : (
                         <>
                           <button
-                            className="primary"
+                            className="primary take"
                             disabled={future || locked}
                             onClick={() => dose(o, "taken")}
                           >
-                            ✓ {t.taken}
+                            {future
+                              ? "⏰ " + o.local_time
+                              : "✓ " + t.takenStatus}
                           </button>
-                          <button
-                            disabled={future || locked}
-                            onClick={() => setSnoozing(o.id)}
-                          >
-                            {t.later}
-                          </button>
-                          <button
-                            disabled={locked}
-                            onClick={() => dose(o, "skipped")}
-                          >
-                            {t.skip}
-                          </button>
-                          {future && (
-                            <small>
-                              {L(
-                                "บันทึกได้เมื่อถึงเวลา",
-                                "You can record this when it is time",
-                              )}
-                            </small>
-                          )}
+                          <span className="dose-links">
+                            {!future && (
+                              <button
+                                className="link-button"
+                                disabled={locked}
+                                onClick={() => setSnoozing(o.id)}
+                              >
+                                {t.later}
+                              </button>
+                            )}
+                            <button
+                              className="link-button"
+                              disabled={locked}
+                              onClick={() => dose(o, "skipped")}
+                            >
+                              {t.skip}
+                            </button>
+                          </span>
                         </>
                       )
                     ) : p.status === "conflict" ? (
-                      <>
-                        <p>
+                      <div className="snooze">
+                        <span>
                           {L(
-                            "มีการบันทึกจาก 2 เครื่องไม่ตรงกัน เลือกสถานะที่ถูกต้อง:",
-                            "Two devices recorded different results. Choose the correct status:",
+                            "บันทึกจาก 2 เครื่องไม่ตรงกัน:",
+                            "Two devices disagree:",
                           )}
-                        </p>
+                        </span>
                         {["taken", "skipped", "unconfirmed"].map((status) => (
                           <button
                             key={status}
@@ -1328,19 +1308,41 @@ function App() {
                             {statusLabel(status, lang)}
                           </button>
                         ))}
-                      </>
+                      </div>
                     ) : (
-                      <button
-                        disabled={view.role === "viewer"}
-                        onClick={() => dose(o, "undo")}
-                      >
-                        {t.undo}
-                      </button>
+                      <>
+                        <span className={"done-badge " + p.status}>
+                          {p.status === "taken" ? "✓ " : "– "}
+                          {statusLabel(p.status, lang)}
+                          {done && p.status === "taken"
+                            ? " " + takenAt(o, p.heads)
+                            : ""}
+                        </span>
+                        <button
+                          className="link-button"
+                          disabled={view.role === "viewer"}
+                          onClick={() => dose(o, "undo")}
+                        >
+                          {L("แก้ไข", "Correct")}
+                        </button>
+                      </>
                     )}
                   </div>
-                </article>
+                  {pendingRegimen && (
+                    <p className="hint warn-text">{t.pending}</p>
+                  )}
+                </div>
               );
             };
+            const byMedicine = [...new Set(todays.map((o) => o.medication_id))]
+              .map((id) => view.medications.find((m) => m.id === id))
+              .filter(Boolean)
+              .sort((a: any, b: any) =>
+                a.data.name.localeCompare(b.data.name, undefined, {
+                  numeric: true,
+                }),
+              );
+            const times = [...new Set(todays.map((o) => o.local_time))];
             const prn = view.medications.filter(
               (m) => current(m.id)?.data.status === "as-needed",
             );
@@ -1390,21 +1392,69 @@ function App() {
                     </span>
                   </section>
                 )}
-                <p className="muted">
-                  {L(
-                    "ตรวจสอบคำแนะนำก่อนใช้ยา",
-                    "Review your instructions before using medicine",
-                  )}
-                </p>
-                {groups.map((time) => (
-                  <section key={time} className="time-group">
-                    <h2 className="time-chip">
-                      <span aria-hidden>🕒 </span>
-                      {time}
-                    </h2>
-                    {open.filter((o) => o.local_time === time).map(card)}
-                  </section>
-                ))}
+                {todays.length > 0 && (
+                  <div
+                    className="segmented"
+                    role="group"
+                    aria-label={L("แสดงรายการ", "Show list")}
+                  >
+                    {(
+                      [
+                        ["time", L("ตามเวลา", "By time")],
+                        ["medicine", L("ตามยา", "By medicine")],
+                      ] as const
+                    ).map(([mode, label]) => (
+                      <button
+                        key={mode}
+                        aria-pressed={todayView === mode}
+                        onClick={() => setTodayView(mode)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {todayView === "time"
+                  ? times.map((time) => {
+                      const list = todays.filter((o) => o.local_time === time);
+                      const allDone = list.every((o) =>
+                        ["taken", "skipped"].includes(statusOf(o).status),
+                      );
+                      return (
+                        <section
+                          key={time}
+                          className={
+                            "time-group" + (allDone ? " all-done" : "")
+                          }
+                        >
+                          <h2 className="group-head">
+                            <span>🕒 {time}</span>
+                            {allDone && (
+                              <span className="group-done">
+                                ✓ {L("ครบแล้ว", "Done")}
+                              </span>
+                            )}
+                          </h2>
+                          {list.map((o) => row(o, "time"))}
+                        </section>
+                      );
+                    })
+                  : byMedicine.map((m: any) => (
+                      <section key={m.id} className="time-group">
+                        <h2 className="group-head">
+                          <button
+                            className="name-link"
+                            onClick={() => setDetail(m)}
+                          >
+                            💊 {m.data.name}
+                            {m.data.strength ? " " + m.data.strength : ""}
+                          </button>
+                        </h2>
+                        {todays
+                          .filter((o) => o.medication_id === m.id)
+                          .map((o) => row(o, "medicine"))}
+                      </section>
+                    ))}
                 {!todays.length && (
                   <div className="empty">
                     {view.medications.length ? (
@@ -1426,14 +1476,6 @@ function App() {
                       </>
                     )}
                   </div>
-                )}
-                {done.length > 0 && (
-                  <details className="done-group">
-                    <summary>
-                      {L("บันทึกแล้ว", "Already recorded")} ({done.length})
-                    </summary>
-                    {done.map(card)}
-                  </details>
                 )}
                 {prn.length > 0 && <h2>{t.prn}</h2>}
                 {prn.map((m) => {
@@ -1599,75 +1641,202 @@ function App() {
                 ＋ {t.add}
               </button>
             </div>
-            <label>
-              {t.search}
-              <input
-                type="search"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </label>
-            <div className="filters">
-              <select
-                aria-label={t.status}
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-              >
-                {[
-                  "active",
-                  "as-needed",
-                  "draft",
-                  "paused",
-                  "stopped",
-                  "all",
-                ].map((x) => (
-                  <option key={x} value={x}>
-                    {(t as any)[x] || x}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {view.medications
-              .filter(
-                (m) =>
-                  [m.data.name, m.data.brand, m.data.purpose]
-                    .join(" ")
-                    .toLowerCase()
-                    .includes(search.toLowerCase()) &&
-                  (filter === "all" ||
-                    (current(m.id)?.data.status || "draft") === filter),
-              )
-              .sort((a, b) => a.data.name.localeCompare(b.data.name))
-              .map((m) => (
-                <article className="medicine-card" key={m.id}>
-                  <div className="card-body">
-                    <Photo
-                      photos={view.photos.filter(
-                        (p) => p.medication_id === m.id,
-                      )}
-                    />
-                    <div>
-                      <h2>{m.data.name}</h2>
-                      <p>{m.data.strength}</p>
-                      <p>{current(m.id)?.data.instructions || t.draft}</p>
-                      {current(m.id)?.data.slots.map((s: any) => (
-                        <p key={s.id} className="dose-amount">
-                          🕒 {s.time} · {s.amount} {s.unit}
-                          {s.weekdays.length < 7
-                            ? " · " + weekdaysText(s.weekdays, lang)
-                            : ""}
-                        </p>
+            {(() => {
+              const rows = summaryRows(view);
+              const info = (id: string) => {
+                const r = rows.find((x) => x.medicine.id === id);
+                return r
+                  ? describe(r, lang, view.profile.data.timezone)
+                  : undefined;
+              };
+              const edit = (m: any) =>
+                view.role !== "viewer" && (
+                  <button className="edit-btn" onClick={() => setEditing(m)}>
+                    ✎ {L("แก้ไข", "Edit")}
+                  </button>
+                );
+              const shown = view.medications
+                .filter(
+                  (m) =>
+                    [m.data.name, m.data.brand, m.data.generic, m.data.purpose]
+                      .join(" ")
+                      .toLowerCase()
+                      .includes(search.toLowerCase()) &&
+                    (filter === "all" ||
+                      (current(m.id)?.data.status || "draft") === filter),
+                )
+                .sort((a, b) =>
+                  a.data.name.localeCompare(b.data.name, undefined, {
+                    numeric: true,
+                  }),
+                );
+              const schedule = view.medications
+                .filter((m) => current(m.id)?.data.status === "active")
+                .flatMap((m) =>
+                  current(m.id)!.data.slots.map((slot: any) => ({ m, slot })),
+                )
+                .sort(
+                  (a, b) =>
+                    a.slot.time.localeCompare(b.slot.time) ||
+                    a.m.data.name.localeCompare(b.m.data.name, undefined, {
+                      numeric: true,
+                    }),
+                );
+              return (
+                <>
+                  {view.medications.length > 0 && (
+                    <div
+                      className="segmented"
+                      role="group"
+                      aria-label={L("แสดงรายการ", "Show list")}
+                    >
+                      {(
+                        [
+                          ["medicine", L("ตามยา", "By medicine")],
+                          ["time", L("ตารางเวลาแต่ละวัน", "Daily schedule")],
+                        ] as const
+                      ).map(([mode, label]) => (
+                        <button
+                          key={mode}
+                          aria-pressed={medView === mode}
+                          onClick={() => setMedView(mode)}
+                        >
+                          {label}
+                        </button>
                       ))}
-                      <span className="badge">
-                        {(t as any)[current(m.id)?.data.status] ||
-                          current(m.id)?.data.status ||
-                          t.draft}
-                      </span>
                     </div>
-                  </div>
-                  <button onClick={() => setDetail(m)}>{t.view}</button>
-                </article>
-              ))}
+                  )}
+                  {medView === "medicine" ? (
+                    <>
+                      {view.medications.length > 4 && (
+                        <label>
+                          {t.search}
+                          <input
+                            type="search"
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                          />
+                        </label>
+                      )}
+                      <div className="filters">
+                        <select
+                          aria-label={t.status}
+                          value={filter}
+                          onChange={(e) => setFilter(e.target.value)}
+                        >
+                          {[
+                            "active",
+                            "as-needed",
+                            "draft",
+                            "paused",
+                            "stopped",
+                            "all",
+                          ].map((x) => (
+                            <option key={x} value={x}>
+                              {(t as any)[x] || x}
+                              {" ("}
+                              {
+                                view.medications.filter(
+                                  (m) =>
+                                    x === "all" ||
+                                    (current(m.id)?.data.status || "draft") ===
+                                      x,
+                                ).length
+                              }
+                              {")"}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      {shown.map((m) => {
+                        const it = info(m.id);
+                        const status = current(m.id)?.data.status || "draft";
+                        return (
+                          <article className="med-row" key={m.id}>
+                            <button
+                              className="med-row-main"
+                              onClick={() => setDetail(m)}
+                              aria-label={t.view + " " + m.data.name}
+                            >
+                              <strong>{it?.title || m.data.name}</strong>
+                              {it?.times && <span>🕒 {it.times}</span>}
+                              {it?.how && <span>{it.how}</span>}
+                              {status !== "active" && (
+                                <span className={"badge status-" + status}>
+                                  {statusLabel(status, lang)}
+                                </span>
+                              )}
+                            </button>
+                            {edit(m)}
+                          </article>
+                        );
+                      })}
+                      {view.medications.length > 0 && !shown.length && (
+                        <p className="muted">
+                          {L(
+                            "ไม่มียาในกลุ่มนี้ ลองเลือก “ทั้งหมด”",
+                            "Nothing here. Try “All”.",
+                          )}
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {[...new Set(schedule.map((x) => x.slot.time))].map(
+                        (time) => (
+                          <section key={time} className="time-group">
+                            <h2 className="group-head">
+                              <span>
+                                🕒 {time}
+                                {mealOf(time)
+                                  ? " · " + mealNames[lang][mealOf(time)!]
+                                  : ""}
+                              </span>
+                            </h2>
+                            {schedule
+                              .filter((x) => x.slot.time === time)
+                              .map(({ m, slot }) => (
+                                <article className="med-row" key={m.id + time}>
+                                  <button
+                                    className="med-row-main"
+                                    onClick={() => setDetail(m)}
+                                  >
+                                    <strong>
+                                      {m.data.name}
+                                      {m.data.strength
+                                        ? " " + m.data.strength
+                                        : ""}
+                                    </strong>
+                                    <span>
+                                      {slot.amount} {slot.unit}
+                                      {current(m.id)?.data.food
+                                        ? " · " + current(m.id)?.data.food
+                                        : ""}
+                                      {slot.weekdays.length < 7
+                                        ? " · " +
+                                          weekdaysText(slot.weekdays, lang)
+                                        : ""}
+                                    </span>
+                                  </button>
+                                  {edit(m)}
+                                </article>
+                              ))}
+                          </section>
+                        ),
+                      )}
+                      {!schedule.length && (
+                        <p className="muted">
+                          {L(
+                            "ยังไม่มียาที่ใช้ตามเวลา",
+                            "No medicines with set times yet",
+                          )}
+                        </p>
+                      )}
+                    </>
+                  )}
+                </>
+              );
+            })()}
             {!view.medications.length && (
               <div className="empty">
                 {t.empty}
@@ -1684,100 +1853,102 @@ function App() {
           <>
             <div className="heading">
               <h1>{t.doctor}</h1>
-              <button
-                onClick={async () => {
-                  try {
-                    await exportPdf(view, pending.length > 0);
-                  } catch (e: any) {
-                    setMessage(
-                      L("สร้าง PDF ไม่สำเร็จ: ", "PDF export failed: ") +
-                        e.message,
-                    );
-                  }
-                }}
-              >
-                {t.pdf}
-              </button>
             </div>
-            <p className="warning">{t.summary}</p>
-            <p>
-              <strong>{view.profile.data.displayName}</strong> ·{" "}
-              {L("วันเกิด", "DOB")}: {day(view.profile.data.dob, lang)}
-            </p>
-            <p>
-              {t.allergy}:{" "}
-              {(t as any)[view.profile.data.allergyStatus] ||
-                view.profile.data.allergyStatus}
-            </p>
-            {view.profile.data.allergies.map((a: any, i: number) => (
-              <p key={i}>
-                {a.substance} · {a.reaction} · {a.source}
-              </p>
-            ))}
-            <small>
-              {L("ข้อมูล ณ", "Data as of")}:{" "}
-              {when(view.serverAt, lang, view.profile.data.timezone)} ·{" "}
-              {L("ทบทวนล่าสุด", "Last reviewed")}:{" "}
-              {view.profile.data.reviewedAt
-                ? when(
-                    view.profile.data.reviewedAt,
+            <button
+              className="primary share-pdf"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  const result = await exportPdf(
+                    view,
+                    pending.length > 0,
                     lang,
-                    view.profile.data.timezone,
+                  );
+                  if (result === "downloaded")
+                    setMessage(
+                      L(
+                        "✓ บันทึกไฟล์ PDF แล้ว ดูได้ในแอป “ไฟล์” หรือโฟลเดอร์ดาวน์โหลด",
+                        "✓ PDF saved. Find it in Files or Downloads.",
+                      ),
+                    );
+                } catch (e: any) {
+                  setMessage(
+                    L("สร้าง PDF ไม่สำเร็จ: ", "PDF export failed: ") +
+                      e.message,
+                  );
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              {busy
+                ? t.loading
+                : "📄 " + L("ส่งหรือพิมพ์ PDF", "Share or print PDF")}
+            </button>
+            <section className="doctor-head">
+              <h2>{view.profile.data.displayName}</h2>
+              <p>
+                {L("วันเกิด", "Date of birth")}:{" "}
+                {day(view.profile.data.dob, lang)}
+              </p>
+              <p
+                className={
+                  "allergy " +
+                  (view.profile.data.allergyStatus === "known" ? "known" : "")
+                }
+              >
+                <strong>{t.allergy}:</strong>{" "}
+                {allergyLabel(view.profile.data.allergyStatus, lang)}
+                {view.profile.data.allergies
+                  .map((a: any) =>
+                    [a.substance, a.reaction && `(${a.reaction})`]
+                      .filter(Boolean)
+                      .join(" "),
                   )
-                : t.unknown}
-            </small>
-            {summaryRows(view).map(({ medicine: m, current: r, future }) => (
-              <article key={m.id}>
-                <h2>{m.data.name}</h2>
-                <p>
-                  {[m.data.generic, m.data.brand, m.data.strength]
-                    .filter(Boolean)
-                    .join(" · ")}
-                  {" · "}
-                  {formNames[lang][m.data.form] || m.data.form} ·{" "}
-                  {productNames[lang][m.data.productType] || m.data.productType}
-                </p>
-                <p>
-                  {statusLabel(r?.data.status || "draft", lang)} ·{" "}
-                  {r?.data.route || m.data.route}
-                </p>
-                <p>
-                  {r?.data.instructions ||
-                    L("ไม่มีคำแนะนำที่บันทึกไว้", "No instructions recorded")}
-                </p>
-                {r?.data.slots.map((x: any) => (
-                  <p key={x.id}>
-                    🕒 {x.time} · {x.amount} {x.unit} ·{" "}
-                    {weekdaysText(x.weekdays, lang)}
-                  </p>
+                  .filter(Boolean)
+                  .map((x: string) => " · " + x)}
+                {view.profile.data.allergyStatus === "unknown" &&
+                  view.role === "owner" && (
+                    <button
+                      className="link-button"
+                      onClick={() => setProfileEdit(true)}
+                    >
+                      {L("บันทึกประวัติแพ้ยา", "Record allergies")}
+                    </button>
+                  )}
+              </p>
+              <small>
+                {disclaimer[lang]} · {L("ข้อมูล ณ", "Data as of")}{" "}
+                {when(view.serverAt, lang, view.profile.data.timezone)}
+              </small>
+            </section>
+            {pending.length > 0 && <p className="warning">{t.pending}</p>}
+            {summarySections(view, lang).map((g) => (
+              <section key={g.title}>
+                <h2 className="section-title">
+                  {g.title} ({g.items.length})
+                </h2>
+                {g.items.map((it) => (
+                  <article key={it.id} className="summary-item">
+                    <h3>{it.title}</h3>
+                    {it.how && <p className="dose-amount">{it.how}</p>}
+                    {it.times && <p>🕒 {it.times}</p>}
+                    {it.extra.map((x) => (
+                      <p key={x} className="muted">
+                        {x}
+                      </p>
+                    ))}
+                    {it.flags.map((x) => (
+                      <p key={x} className="warn-text">
+                        ⚠ {x}
+                      </p>
+                    ))}
+                  </article>
                 ))}
-                <p>
-                  {r?.data.food ? r.data.food + " · " : ""}
-                  {day(r?.data.start, lang)} —{" "}
-                  {r?.data.end ? day(r.data.end, lang) : "…"}
-                </p>
-                <p>
-                  {m.data.purpose} · {t.source}:{" "}
-                  {r?.data.source || m.data.source}
-                </p>
-                <span className="badge">
-                  {m.data.verified
-                    ? L("มีบันทึกการตรวจสอบ", "Verification recorded")
-                    : L(
-                        "ยังไม่ได้ตรวจสอบโดยผู้เชี่ยวชาญ",
-                        "Not professionally verified",
-                      )}
-                </span>
-                {r?.pending && <p className="warning">{t.pending}</p>}
-                {future.map((f) => (
-                  <p key={f.id}>
-                    {t.future}:{" "}
-                    {when(f.effective_at, lang, view.profile.data.timezone)} ·{" "}
-                    {f.data.instructions}
-                  </p>
-                ))}
-              </article>
+              </section>
             ))}
+            {!view.medications.length && <div className="empty">{t.empty}</div>}
           </>
         )}
       </main>
@@ -1887,127 +2058,234 @@ function App() {
           close={() => setDetail(undefined)}
           closeLabel={L("ปิด", "Close")}
         >
-          <Photo
-            photos={view.photos.filter((p) => p.medication_id === detail.id)}
-          />
-          <p>
-            {[
-              detail.data.strength,
-              formNames[lang][detail.data.form],
-              detail.data.route,
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-          </p>
-          {detail.data.purpose && (
-            <p>
-              {t.purpose}: {detail.data.purpose}
-            </p>
-          )}
-          <p>{current(detail.id)?.data.instructions}</p>
-          {current(detail.id)?.data.slots.map((x: any) => (
-            <p key={x.id} className="dose-amount">
-              🕒 {x.time} · {x.amount} {x.unit} ·{" "}
-              {weekdaysText(x.weekdays, lang)}
-            </p>
-          ))}
-          <p>
-            {t.status}:{" "}
-            <span className="badge">
-              {statusLabel(current(detail.id)?.data.status || "draft", lang)}
-            </span>
-          </p>
-          <div className="actions">
-            <button
-              className="primary"
-              disabled={view.role === "viewer"}
-              onClick={() => {
-                setEditing(detail);
-                setDetail(undefined);
-              }}
-            >
-              ✎ {L("แก้ไขข้อมูลยา", "Edit medicine")}
-            </button>
-            {(
-              [
-                ["paused", L("พักการใช้ยา", "Pause")],
-                ["active", L("กลับมาใช้ยา", "Resume")],
-                ["stopped", L("หยุดใช้ยา", "Stop")],
-              ] as const
-            )
-              .filter(([status]) => {
-                const now = current(detail.id)?.data.status;
-                return status === "paused"
-                  ? now === "active" || now === "as-needed"
-                  : status === "active"
-                    ? now === "paused" || now === "stopped"
-                    : now !== "stopped";
-              })
-              .map(([status, label]) => (
-                <button
-                  key={status}
-                  disabled={view.role === "viewer" || !current(detail.id)}
-                  onClick={async () => {
-                    const r = current(detail.id)?.data;
-                    if (
-                      r &&
-                      confirm(
-                        label +
-                          " " +
-                          detail.data.name +
-                          "? " +
-                          L(
-                            "การแจ้งเตือนจากเซิร์ฟเวอร์จะเปลี่ยนหลังซิงค์ข้อมูลแล้ว ประวัติเดิมยังเก็บไว้",
-                            "Server reminders change after synchronization. History is kept.",
-                          ),
-                      )
-                    ) {
-                      try {
-                        await queue("regimen", detail.id, detail.version, {
-                          ...r,
-                          status,
-                          effectiveAt: new Date().toISOString(),
-                          effectiveMode: "on-commit",
-                          reason: status,
-                        });
-                      } catch {
-                        /* queue reports storage failures */
-                      }
-                    }
-                    setDetail(undefined);
-                  }}
-                >
-                  {label}
-                </button>
-              ))}
-          </div>
-          <h2>{t.history}</h2>
-          {[...view.regimens, ...(view.retiredRegimens || [])]
-            .filter((r) => r.medication_id === detail.id)
-            .sort(
-              (a, b) => Date.parse(b.effective_at) - Date.parse(a.effective_at),
-            )
-            .map((r) => (
-              <article key={r.id}>
-                <p>
-                  <strong>
-                    {when(r.effective_at, lang, view.profile.data.timezone)}
-                  </strong>{" "}
-                  · {statusLabel(r.data.status, lang)}{" "}
-                  {r.pending
-                    ? L("(รอซิงค์)", "(pending)")
-                    : r.replacement_id
-                      ? L("(ถูกแทนที่แล้ว)", "(superseded)")
-                      : ""}
-                </p>
-                <p>{r.data.instructions}</p>
-                {(r.data.source || r.data.reason) && (
-                  <p className="muted">
-                    {[r.data.source, r.data.reason].filter(Boolean).join(" · ")}
+          {(() => {
+            const row = summaryRows(view).find(
+              (x) => x.medicine.id === detail.id,
+            );
+            const it = row
+              ? describe(row, lang, view.profile.data.timezone)
+              : undefined;
+            const status = current(detail.id)?.data.status || "draft";
+            const records = view.events
+              .filter(
+                (e) =>
+                  e.medication_id === detail.id &&
+                  ["taken", "skipped", "as-needed"].includes(e.action),
+              )
+              .sort(
+                (a, b) =>
+                  Date.parse(b.actual_at || b.client_at) -
+                  Date.parse(a.actual_at || a.client_at),
+              )
+              .slice(0, 7);
+            const changeStatus = async (next: string, label: string) => {
+              const r = current(detail.id)?.data;
+              if (
+                !r ||
+                !confirm(
+                  label +
+                    " " +
+                    detail.data.name +
+                    "? " +
+                    L(
+                      "ประวัติเดิมยังเก็บไว้ การแจ้งเตือนจะเปลี่ยนหลังซิงค์",
+                      "History is kept. Reminders change after syncing.",
+                    ),
+                )
+              )
+                return;
+              try {
+                await queue("regimen", detail.id, detail.version, {
+                  ...r,
+                  status: next,
+                  effectiveAt: new Date().toISOString(),
+                  effectiveMode: "on-commit",
+                  reason: label,
+                });
+                setMessage("✓ " + label + ": " + detail.data.name);
+              } catch {
+                /* queue reports storage failures */
+              }
+              setDetail(undefined);
+            };
+            return (
+              <>
+                <div className="detail-top">
+                  <Photo
+                    photos={view.photos.filter(
+                      (p) => p.medication_id === detail.id,
+                    )}
+                  />
+                  <div>
+                    {it?.how && <p className="dose-amount">{it.how}</p>}
+                    {it?.times && <p>🕒 {it.times}</p>}
+                    <span className={"badge status-" + status}>
+                      {statusLabel(status, lang)}
+                    </span>
+                  </div>
+                </div>
+                {it?.extra.map((x) => (
+                  <p key={x} className="muted">
+                    {x}
                   </p>
+                ))}
+                {it?.flags.map((x) => (
+                  <p key={x} className="warn-text">
+                    ⚠ {x}
+                  </p>
+                ))}
+                {view.role !== "viewer" && (
+                  <div className="detail-actions">
+                    <button
+                      className="primary"
+                      onClick={() => {
+                        setEditing(detail);
+                        setDetail(undefined);
+                      }}
+                    >
+                      ✎ {L("แก้ไขวิธีใช้ / เวลา", "Edit dose / times")}
+                    </button>
+                    {(status === "active" || status === "as-needed") && (
+                      <button
+                        onClick={() =>
+                          changeStatus("paused", L("พักยาชั่วคราว", "Pause"))
+                        }
+                      >
+                        ⏸ {L("พักยาชั่วคราว", "Pause")}
+                      </button>
+                    )}
+                    {(status === "paused" || status === "stopped") && (
+                      <button
+                        onClick={() =>
+                          changeStatus("active", L("กลับมาใช้ยา", "Resume"))
+                        }
+                      >
+                        ▶ {L("กลับมาใช้ยา", "Resume")}
+                      </button>
+                    )}
+                    {status !== "stopped" && current(detail.id) && (
+                      <button
+                        onClick={() =>
+                          changeStatus("stopped", L("หยุดใช้ยา", "Stop"))
+                        }
+                      >
+                        ⏹{" "}
+                        {L(
+                          "หยุดใช้ยา (แพทย์สั่งหยุด)",
+                          "Stop (doctor stopped it)",
+                        )}
+                      </button>
+                    )}
+                    <button
+                      className="danger"
+                      onClick={async () => {
+                        if (
+                          !confirm(
+                            L(
+                              "ลบ “" +
+                                detail.data.name +
+                                "” ออกจากรายการ? ใช้เมื่อเพิ่มผิดหรือซ้ำ (ถ้าแพทย์สั่งหยุด ให้กด “หยุดใช้ยา” แทน)",
+                              "Remove “" +
+                                detail.data.name +
+                                "” from the list? Use this for mistakes or duplicates (if the doctor stopped it, use Stop instead).",
+                            ),
+                          )
+                        )
+                          return;
+                        try {
+                          await api(
+                            "/patients/" +
+                              patient +
+                              "/medications/" +
+                              detail.id,
+                            undefined,
+                            "DELETE",
+                          );
+                          // Drop queued edits for the removed medicine.
+                          await db.outbox
+                            .filter(
+                              (o) =>
+                                o.resourceId === detail.id ||
+                                o.data?.medicationId === detail.id,
+                            )
+                            .delete();
+                          setDetail(undefined);
+                          await sync();
+                          setMessage(
+                            "✓ " +
+                              L("ลบแล้ว: ", "Removed: ") +
+                              detail.data.name,
+                          );
+                        } catch (e: any) {
+                          setMessage(
+                            friendlyError(e, lang) +
+                              L(
+                                " (การลบต้องเชื่อมต่ออินเทอร์เน็ต)",
+                                " (removing needs an internet connection)",
+                              ),
+                          );
+                        }
+                      }}
+                    >
+                      🗑 {L("ลบ (เพิ่มผิด/ซ้ำ)", "Delete (mistake/duplicate)")}
+                    </button>
+                  </div>
                 )}
-              </article>
-            ))}
+                <h3>{L("บันทึกการใช้ยาล่าสุด", "Recent records")}</h3>
+                {records.length ? (
+                  records.map((e) => (
+                    <p key={e.id} className="history-row">
+                      {e.action === "as-needed"
+                        ? t.prn
+                        : statusLabel(e.action, lang)}{" "}
+                      ·{" "}
+                      {when(
+                        e.actual_at || e.client_at,
+                        lang,
+                        view.profile.data.timezone,
+                      )}
+                    </p>
+                  ))
+                ) : (
+                  <p className="muted">—</p>
+                )}
+                <details className="about">
+                  <summary>
+                    {L("ประวัติการเปลี่ยนแปลง", "Change history")}
+                  </summary>
+                  {[...view.regimens, ...(view.retiredRegimens || [])]
+                    .filter((r) => r.medication_id === detail.id)
+                    .sort(
+                      (a, b) =>
+                        Date.parse(b.effective_at) - Date.parse(a.effective_at),
+                    )
+                    .map((r) => (
+                      <p key={r.id} className="history-row">
+                        <strong>
+                          {when(
+                            r.effective_at,
+                            lang,
+                            view.profile.data.timezone,
+                          )}
+                        </strong>{" "}
+                        · {statusLabel(r.data.status, lang)}
+                        {r.pending
+                          ? L(" (รอซิงค์)", " (pending)")
+                          : r.replacement_id
+                            ? L(" (ถูกแทนที่แล้ว)", " (superseded)")
+                            : ""}
+                        <br />
+                        <small>
+                          {[r.data.instructions, r.data.reason]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </small>
+                      </p>
+                    ))}
+                </details>
+              </>
+            );
+          })()}
         </Modal>
       )}
       {settings && view && (
@@ -2046,26 +2324,12 @@ function App() {
           </section>
           <section className="settings-group">
             <h3>{t.remindersOn}</h3>
-            <p>{t.install}</p>
-            <ol className="install-guide">
-              <li>
-                <span aria-hidden>↑</span>
-                {L("Safari: กดปุ่มแชร์", "Safari: tap Share")}
-              </li>
-              <li>
-                <span aria-hidden>＋</span>
-                {L("เพิ่มไปยังหน้าจอโฮม", "Add to Home Screen")}
-              </li>
-              <li>
-                <span aria-hidden>▣</span>
-                {L("เปิดแอปจากไอคอนใหม่", "Open the app from the new icon")}
-              </li>
-            </ol>
+            <InstallGuide lang={lang} always />
             <ul className="checklist">
               {(
                 [
                   [
-                    matchMedia("(display-mode: standalone)").matches,
+                    standalone(),
                     L("ติดตั้งบนหน้าจอโฮม", "Installed on Home Screen"),
                   ],
                   [
@@ -2222,6 +2486,107 @@ function App() {
             >
               {t.export}
             </button>
+          </section>
+          <section className="settings-group">
+            <h3>{L("ล้างข้อมูล / เริ่มใหม่", "Reset")}</h3>
+            <button
+              onClick={async () => {
+                if (
+                  pending.length &&
+                  !confirm(
+                    L(
+                      "มีการแก้ไขที่ยังไม่ซิงค์ " +
+                        pending.length +
+                        " รายการ ถ้าโหลดใหม่จะหายไป ต้องการทำต่อหรือไม่",
+                      pending.length +
+                        " unsynced change(s) will be lost. Continue?",
+                    ),
+                  )
+                )
+                  return;
+                await Promise.all([
+                  db.snapshots.clear(),
+                  db.outbox.clear(),
+                  db.drafts.clear(),
+                  db.photos.clear(),
+                ]);
+                setPending([]);
+                setSettings(false);
+                await sync();
+                setMessage(
+                  L(
+                    "✓ โหลดข้อมูลใหม่จากเซิร์ฟเวอร์แล้ว",
+                    "✓ Reloaded from the server",
+                  ),
+                );
+              }}
+            >
+              🔄 {L("โหลดข้อมูลใหม่จากเซิร์ฟเวอร์", "Reload data from server")}
+            </button>
+            <p className="hint">
+              {L(
+                "ใช้เมื่อข้อมูลในเครื่องดูไม่ถูกต้อง ข้อมูลในบัญชีไม่หาย",
+                "Use if this phone looks wrong. Your account data stays.",
+              )}
+            </p>
+            {view.role === "owner" && (
+              <>
+                <button
+                  className="danger"
+                  onClick={async () => {
+                    const count = view.medications.length;
+                    if (
+                      !count ||
+                      !confirm(
+                        L(
+                          "ลบรายการยาทั้งหมด " +
+                            count +
+                            " รายการ แล้วเริ่มใหม่? ข้อมูลผู้ป่วยและประวัติแพ้ยายังอยู่",
+                          "Remove all " +
+                            count +
+                            " medicines and start again? Profile and allergies stay.",
+                        ),
+                      ) ||
+                      !confirm(
+                        L(
+                          "ยืนยันอีกครั้ง: การแจ้งเตือนทั้งหมดจะหยุด และย้อนกลับไม่ได้",
+                          "Confirm again: all reminders stop and this cannot be undone.",
+                        ),
+                      )
+                    )
+                      return;
+                    try {
+                      await api("/patients/" + patient + "/reset", {
+                        confirm: "RESET",
+                      });
+                      await db.outbox
+                        .filter((o) => o.patientId === patient)
+                        .delete();
+                      await db.drafts.clear();
+                      setSettings(false);
+                      await sync();
+                      setMessage(
+                        L("✓ ลบรายการยาทั้งหมดแล้ว", "✓ All medicines removed"),
+                      );
+                    } catch (e: any) {
+                      setMessage(
+                        friendlyError(e, lang) +
+                          L(
+                            " (ต้องเชื่อมต่ออินเทอร์เน็ต)",
+                            " (needs an internet connection)",
+                          ),
+                      );
+                    }
+                  }}
+                >
+                  🗑{" "}
+                  {L(
+                    "ลบรายการยาทั้งหมดและเริ่มใหม่",
+                    "Delete all medicines and start over",
+                  )}
+                </button>
+              </>
+            )}
           </section>
           <section className="settings-group">
             <h3>{L("บัญชี", "Account")}</h3>
@@ -2414,9 +2779,11 @@ function MedicineForm({
   });
   const [asNeeded, setAsNeeded] = useState(start?.status === "as-needed"),
     [amount, setAmountState] = useState<string>(
-      start?.slots?.[0]?.amount || "",
+      start?.slots?.[0]?.amount || start?.prnAmount || "",
     ),
-    [unit, setUnitState] = useState<string>(start?.slots?.[0]?.unit || ""),
+    [unit, setUnitState] = useState<string>(
+      start?.slots?.[0]?.unit || start?.prnUnit || "",
+    ),
     [days, setDays] = useState<number[]>(
       start?.slots?.[0]?.weekdays || [1, 2, 3, 4, 5, 6, 7],
     ),
@@ -2635,6 +3002,8 @@ function MedicineForm({
           : keepStatus || (asNeeded ? "as-needed" : "active"),
         route,
         instructions: (r.instructions || "").trim() || generated,
+        prnAmount: asNeeded ? amount || undefined : undefined,
+        prnUnit: asNeeded ? unit || undefined : undefined,
         slots: asNeeded
           ? []
           : slots.map(({ meal, ...s }: any) => ({
@@ -3186,6 +3555,167 @@ function Caregivers({
         {message}
       </p>
     </>
+  );
+}
+function InstallGuide({
+  lang,
+  always = false,
+}: {
+  lang: Language;
+  always?: boolean;
+}) {
+  const L = (th: string, en: string) => (lang === "th" ? th : en);
+  const [, refresh] = useState(0);
+  const [hidden, setHidden] = useState(() => {
+    try {
+      return (
+        Number(localStorage.getItem("install-dismissed") || 0) >
+        Date.now() - 7 * 86400000
+      );
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    const f = () => refresh((n) => n + 1);
+    installListeners.add(f);
+    return () => {
+      installListeners.delete(f);
+    };
+  }, []);
+  if (standalone()) return null;
+  if (hidden && !always) return null;
+  const ua = navigator.userAgent;
+  const ios =
+    /iPhone|iPad|iPod/.test(ua) ||
+    (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  const inApp = /Line\/|FBAN|FBAV|Instagram|MicroMessenger/i.test(ua);
+  const shareIcon = (
+    <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
+      <path
+        d="M12 3v12M7.5 7.5 12 3l4.5 4.5M6 11H5v10h14V11h-1"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+  const addIcon = (
+    <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
+      <rect
+        x="3.5"
+        y="3.5"
+        width="17"
+        height="17"
+        rx="4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+      <path
+        d="M12 8v8M8 12h8"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+  return (
+    <section
+      className="install-card"
+      aria-label={L("ติดตั้งแอป", "Install the app")}
+    >
+      <h2>
+        📲 {L("เพิ่มแอปไว้ที่หน้าจอโฮม", "Add the app to your Home Screen")}
+      </h2>
+      <p>
+        {L(
+          "เปิดง่ายเหมือนแอปทั่วไป และจำเป็นสำหรับการแจ้งเตือนบน iPhone",
+          "Opens like a normal app, and is needed for reminders on iPhone.",
+        )}
+      </p>
+      {inApp ? (
+        <p className="warning">
+          {L(
+            "ตอนนี้เปิดอยู่ในแอป LINE/Facebook กรุณากดเมนู ⋯ แล้วเลือก “เปิดใน Safari” (หรือเบราว์เซอร์) ก่อน",
+            "You are inside LINE/Facebook. Tap the ⋯ menu and choose “Open in Safari” (or your browser) first.",
+          )}
+        </p>
+      ) : installPrompt ? (
+        <button
+          className="primary"
+          onClick={async () => {
+            installPrompt.prompt();
+            await installPrompt.userChoice.catch(() => {});
+            installPrompt = null;
+            refresh((n) => n + 1);
+          }}
+        >
+          📲 {L("ติดตั้งแอป", "Install app")}
+        </button>
+      ) : ios ? (
+        <ol className="install-steps">
+          <li>
+            <span className="step-icon">{shareIcon}</span>
+            <span>
+              {L("แตะปุ่ม", "Tap the")} <strong>{L("แชร์", "Share")}</strong>{" "}
+              {L(
+                "(สี่เหลี่ยมมีลูกศรชี้ขึ้น) ที่แถบด้านล่างของ Safari",
+                "button (square with an up arrow) in Safari's bottom bar",
+              )}
+            </span>
+          </li>
+          <li>
+            <span className="step-icon">{addIcon}</span>
+            <span>
+              {L("เลื่อนลงแล้วแตะ", "Scroll down and tap")}{" "}
+              <strong>{L("เพิ่มไปยังหน้าจอโฮม", "Add to Home Screen")}</strong>
+            </span>
+          </li>
+          <li>
+            <span className="step-icon app-icon" aria-hidden="true">
+              ＋
+            </span>
+            <span>
+              {L("แตะ", "Tap")} <strong>{L("เพิ่ม", "Add")}</strong>{" "}
+              {L(
+                "แล้วเปิดแอปจากไอคอน “เพื่อนเรื่องยา” ทุกครั้ง",
+                "then always open the app from the new icon",
+              )}
+            </span>
+          </li>
+        </ol>
+      ) : (
+        <p>
+          {L(
+            "เปิดเมนูของเบราว์เซอร์ (⋮) แล้วเลือก “ติดตั้งแอป” หรือ “เพิ่มลงในหน้าจอหลัก”",
+            "Open the browser menu (⋮) and choose “Install app” or “Add to Home screen”.",
+          )}
+        </p>
+      )}
+      {!always && (
+        <button
+          className="link-button"
+          onClick={() => {
+            try {
+              localStorage.setItem("install-dismissed", String(Date.now()));
+            } catch {
+              /* private mode */
+            }
+            setHidden(true);
+          }}
+        >
+          {L("ไว้ทีหลัง", "Later")}
+        </button>
+      )}
+      {ios && !inApp && !always && (
+        <div className="install-arrow" aria-hidden="true">
+          ⬇
+        </div>
+      )}
+    </section>
   );
 }
 function ChangePin({ lang }: { lang: Language }) {
