@@ -16,8 +16,19 @@ import {
 import { authenticate, demoEnabled, demoToken, supabase } from "./auth.js";
 import { seal } from "./secrets.js";
 import { validateEndpoint } from "../../worker/src/push.js";
-import { cronAuthorized, runReminderBatch } from "../../worker/src/serverless.js";
+import {
+  cronAuthorized,
+  runReminderBatch,
+} from "../../worker/src/serverless.js";
 import { PostgresRateStore } from "./rate-store.js";
+import {
+  checkNewPin,
+  hashPin,
+  normalizePhone,
+  phoneEmail,
+  providerPassword,
+  verifyPinAttempt,
+} from "./pin-auth.js";
 import { productionConfigErrors } from "../../../scripts/production-config.js";
 import { once } from "node:events";
 import { runRetention } from "../../worker/src/retention.js";
@@ -55,6 +66,7 @@ app.use(
   rateLimit({
     windowMs: 60000,
     limit: 120,
+    message: { error: "Too many requests" },
     standardHeaders: "draft-8",
     legacyHeaders: false,
     ...(process.env.VERCEL ? { store: new PostgresRateStore("api") } : {}),
@@ -111,6 +123,68 @@ app.post("/api/demo", async (req, res) => {
   )
     throw new HttpError(403, "Local synthetic demo only");
   res.json({ token: await demoToken() });
+});
+// Phone + PIN sign-in. Brute force is limited per number (lockout in
+// verifyPinAttempt) and per client address here.
+const pinLimiter = rateLimit({
+  windowMs: 15 * 60000,
+  limit: 20,
+  message: { error: "Too many requests" },
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  ...(process.env.VERCEL ? { store: new PostgresRateStore("pin") } : {}),
+});
+async function issueSession(phone: string) {
+  const { data, error } = await supabase().auth.signInWithPassword({
+    email: phoneEmail(phone),
+    password: providerPassword(phone),
+  });
+  if (error || !data.session)
+    throw new HttpError(503, "Sign-in service unavailable; try again");
+  return {
+    access_token: data.session.access_token,
+    refresh_token: data.session.refresh_token,
+    user_id: data.session.user.id,
+  };
+}
+app.post("/api/auth/pin/register", pinLimiter, async (req, res) => {
+  const phone = normalizePhone(req.body?.phone);
+  const pin = String(req.body?.pin ?? "");
+  checkNewPin(pin);
+  const existing = (
+    await pool.query(
+      "SELECT user_id,pin_hash FROM pin_credentials WHERE phone=$1",
+      [phone],
+    )
+  ).rows[0];
+  if (existing?.pin_hash)
+    throw new HttpError(409, "This phone number is already registered");
+  let userId: string | undefined = existing?.user_id;
+  if (!userId) {
+    const { data } = await supabase().auth.admin.createUser({
+      email: phoneEmail(phone),
+      password: providerPassword(phone),
+      email_confirm: true,
+      user_metadata: { phone },
+    });
+    // An interrupted earlier registration may already have created the account.
+    userId = data?.user?.id || (await issueSession(phone)).user_id;
+  }
+  const saved = await pool.query(
+    "INSERT INTO pin_credentials(phone,user_id,pin_hash) VALUES($1,$2,$3) ON CONFLICT(phone) DO UPDATE SET pin_hash=excluded.pin_hash,failed_attempts=0,lock_count=0,locked_until=NULL,updated_at=now() WHERE pin_credentials.pin_hash IS NULL",
+    [phone, userId, await hashPin(phone, pin)],
+  );
+  if (!saved.rowCount)
+    throw new HttpError(409, "This phone number is already registered");
+  res.json(await issueSession(phone));
+});
+app.post("/api/auth/pin/login", pinLimiter, async (req, res) => {
+  const phone = normalizePhone(req.body?.phone);
+  const result = await transaction((c) =>
+    verifyPinAttempt(c, { phone }, String(req.body?.pin ?? "")),
+  );
+  if ("error" in result) throw result.error;
+  res.json(await issueSession(phone));
 });
 app.use("/api", async (req, res, next) => {
   try {
@@ -376,13 +450,34 @@ app.post("/api/push/observations", async (req, res) => {
   );
   res.json({ recorded: true });
 });
+app.post("/api/auth/pin/change", pinLimiter, async (req, res) => {
+  const newPin = String(req.body?.newPin ?? "");
+  checkNewPin(newPin);
+  const result = await transaction((c) =>
+    verifyPinAttempt(
+      c,
+      { userId: res.locals.user.id },
+      String(req.body?.currentPin ?? ""),
+    ),
+  );
+  if ("error" in result) throw result.error;
+  await pool.query(
+    "UPDATE pin_credentials SET pin_hash=$2,updated_at=now() WHERE phone=$1",
+    [result.phone, await hashPin(result.phone, newPin)],
+  );
+  res.json({ changed: true });
+});
 app.post("/api/patients/:id/invitations", async (req, res) => {
   const d = z
     .object({
-      recipient: z.string().email(),
+      recipient: z.string().trim().min(3).max(320),
       role: z.enum(["viewer", "editor"]),
     })
     .parse(req.body);
+  // Caregivers are invited by email or by the phone number they sign in with.
+  const recipient = d.recipient.includes("@")
+    ? z.string().email().parse(d.recipient)
+    : phoneEmail(normalizePhone(d.recipient));
   const token = randomBytes(32).toString("base64url");
   await transaction(async (c) => {
     await authorize(c, res.locals.user.id, req.params.id, "owner");
@@ -392,7 +487,7 @@ app.post("/api/patients/:id/invitations", async (req, res) => {
         randomUUID(),
         req.params.id,
         createHash("sha256").update(token).digest("hex"),
-        d.recipient.toLowerCase(),
+        recipient.toLowerCase(),
         d.role,
       ],
     );
@@ -674,6 +769,8 @@ app.delete("/api/account", async (req, res) => {
     await c.query("UPDATE devices SET revoked_at=now() WHERE user_id=$1", [
       actor,
     ]);
+    // Frees the phone number for a new registration.
+    await c.query("DELETE FROM pin_credentials WHERE user_id=$1", [actor]);
   });
   await pool.query(
     "INSERT INTO account_deletions(user_id) VALUES($1) ON CONFLICT DO NOTHING",

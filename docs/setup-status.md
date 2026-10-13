@@ -4,7 +4,7 @@ Last updated: 13 October 2026.
 
 ## Already done
 
-- **Supabase database** (`qfiplelamyjwvexosmii`): migrations 001–007 applied, RLS enabled on every app
+- **Supabase database** (`qfiplelamyjwvexosmii`): migrations 001–008 applied, RLS enabled on every app
   table with browser roles revoked (the API is the only way in), private `medication-photos` bucket
   (2 MB JPEG), restrictive storage policy, `immutable_rows()` search path pinned.
 - **Vercel** (`aoe5/take-medication`): production environment variables present; functions pinned to
@@ -20,19 +20,36 @@ Last updated: 13 October 2026.
 Vercel deploys `main` automatically. Until the branch is merged, the next push to `main` would
 redeploy the old, broken code.
 
-### 2. Email sign-in (Supabase → Authentication)
+### 2. Sign-in: phone number + 4-digit PIN
 
-1. **URL Configuration** → Site URL: `https://take-medication.vercel.app`.
-2. **Emails → SMTP Settings**: enable custom SMTP (for example Resend, Brevo or Gmail SMTP). The
-   built-in mailer only sends a few emails per hour, which is not enough for real patients.
-3. **Emails → Templates** → *Magic Link* and *Confirm signup*: include the code so users can type it:
+Patients register with their phone number and choose their own 4-digit PIN. No email or SMS
+is sent, so no SMTP or email template setup is needed. The server stores only salted scrypt
+hashes and locks a number for 15 minutes after 5 wrong PINs; each repeat lockout doubles the
+wait, up to 24 hours. Logins are also limited to 20 attempts per 15 minutes per connection.
 
-   ```html
-   <h2>รหัสเข้าสู่ระบบ / Sign-in code</h2>
-   <p style="font-size:28px;letter-spacing:4px"><strong>{{ .Token }}</strong></p>
-   ```
+Optional: in Vercel add a `PIN_AUTH_SECRET` environment variable (a long random string) *before
+anyone registers*. Without it, a key derived from `PUSH_ENCRYPTION_KEY` is used. Adding, changing
+or removing `PIN_AUTH_SECRET`, or changing `PUSH_ENCRYPTION_KEY`, after people have registered
+makes every existing PIN stop working.
 
-4. Sign in with your own email at https://take-medication.vercel.app to confirm a code arrives.
+Because every sign-in goes through the Vercel server, raise Supabase → Authentication →
+Rate Limits → "sign-ups and sign-ins" if many people sign in at the same time.
+
+**Unlock a number** (Supabase → SQL Editor):
+
+```sql
+update pin_credentials set failed_attempts = 0, locked_until = null where phone = '+66812345678';
+```
+
+**Forgotten PIN.** Check the person's identity first, then run the following. They tap
+"ใช้ครั้งแรก? สมัครด้วยเบอร์โทร" and set a new PIN with the same number; their medicine
+records stay.
+
+```sql
+update pin_credentials set pin_hash = null, failed_attempts = 0, locked_until = null where phone = '+66812345678';
+```
+
+Phone numbers are stored in international form: 081-234-5678 becomes `+66812345678`.
 
 ### 3. Reminder scheduler (Supabase Cron)
 
