@@ -44,8 +44,133 @@ async function api(path: string, body?: any, method = body ? "POST" : "GET") {
   return r.json();
 }
 let localSequence = Date.now() * 1000;
+const weekdayNames = {
+  th: ["จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส.", "อา."],
+  en: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+};
+const formNames: Record<Language, Record<string, string>> = {
+  th: {
+    tablet: "ยาเม็ด",
+    capsule: "แคปซูล",
+    liquid: "ยาน้ำ",
+    drops: "ยาหยอด",
+    injection: "ยาฉีด",
+    inhaler: "ยาสูดพ่น",
+    topical: "ยาใช้ภายนอก",
+    other: "อื่น ๆ",
+  },
+  en: {
+    tablet: "Tablet",
+    capsule: "Capsule",
+    liquid: "Liquid",
+    drops: "Drops",
+    injection: "Injection",
+    inhaler: "Inhaler",
+    topical: "Topical",
+    other: "Other",
+  },
+};
+const productNames: Record<Language, Record<string, string>> = {
+  th: {
+    prescription: "ยาตามใบสั่งแพทย์",
+    nonprescription: "ยาที่ซื้อเอง",
+    supplement: "อาหารเสริม / สมุนไพร",
+  },
+  en: {
+    prescription: "Prescription",
+    nonprescription: "Non-prescription",
+    supplement: "Supplement / herbal",
+  },
+};
+function weekdaysText(days: number[], lang: Language) {
+  if (days.length === 7) return words[lang].everyDay;
+  return [...days]
+    .sort((a, b) => a - b)
+    .map((d) => weekdayNames[lang][d - 1])
+    .join(" ");
+}
+function when(iso: string | undefined, lang: Language, zone = "Asia/Bangkok") {
+  if (!iso) return "—";
+  const d = DateTime.fromISO(iso, { zone });
+  return d.isValid
+    ? d.setLocale(lang).toLocaleString(DateTime.DATETIME_MED)
+    : iso;
+}
+function day(date: string | undefined, lang: Language) {
+  if (!date) return "—";
+  const d = DateTime.fromISO(date);
+  return d.isValid ? d.setLocale(lang).toLocaleString(DateTime.DATE_MED) : date;
+}
+function statusLabel(status: string, lang: Language) {
+  const t = words[lang] as Record<string, string>;
+  return status === "unconfirmed"
+    ? t.unconfirmed
+    : t[status + "Status"] || t[status] || status;
+}
+// Plain-language messages for validation and sign-in errors instead of raw JSON.
+function friendlyError(e: any, lang: Language): string {
+  const th = lang === "th";
+  if (Array.isArray(e?.issues)) {
+    const messages = e.issues.map((i: any) => {
+      const key = i.path?.[0],
+        sub = i.path?.[2];
+      if (key === "name")
+        return th ? "กรุณาใส่ชื่อยา" : "Enter the medicine name";
+      if (key === "displayName")
+        return th ? "กรุณาใส่ชื่อผู้ป่วย" : "Enter the patient name";
+      if (key === "confirmed") return words[lang].statusHelp;
+      if (key === "end")
+        return th
+          ? "วันสิ้นสุดต้องไม่ก่อนวันที่เริ่ม"
+          : "End date cannot be before the start date";
+      if (key === "start" || key === "dob")
+        return th ? "วันที่ไม่ถูกต้อง" : "Invalid date";
+      if (key === "effectiveAt")
+        return th
+          ? "วันที่และเวลาที่มีผลไม่ถูกต้อง"
+          : "Invalid effective date and time";
+      if (key === "timezone")
+        return th ? "เขตเวลาไม่ถูกต้อง" : "Invalid timezone";
+      if (key === "slots") {
+        if (sub === "time")
+          return th ? "กรุณาใส่เวลาให้ครบทุกช่อง" : "Enter every time";
+        if (sub === "amount")
+          return th
+            ? "ปริมาณต้องเป็นตัวเลขมากกว่า 0 เช่น 1, 0.5 หรือ 1/2"
+            : "Amount must be a positive number such as 1, 0.5 or 1/2";
+        if (sub === "unit")
+          return th
+            ? "กรุณาใส่หน่วย เช่น เม็ด หรือ มล."
+            : "Enter a unit such as tablet or mL";
+        if (sub === "weekdays")
+          return th ? "เลือกอย่างน้อย 1 วัน" : "Choose at least one day";
+        return th
+          ? "มีเวลาใช้ยาซ้ำกัน กรุณาตรวจสอบ"
+          : "Two times are the same; please check";
+      }
+      return i.message;
+    });
+    return [...new Set(messages)].join(" · ");
+  }
+  const message = String(e?.message || e || "");
+  if (/expired|invalid.*(otp|token)|token.*invalid/i.test(message))
+    return th
+      ? "รหัสไม่ถูกต้องหรือหมดอายุ กรุณาขอรหัสใหม่"
+      : "The code is wrong or expired. Please request a new code.";
+  if (/rate limit|security purposes|too many/i.test(message))
+    return th
+      ? "ขอรหัสบ่อยเกินไป กรุณารอสักครู่แล้วลองใหม่"
+      : "Too many requests. Please wait a minute and try again.";
+  if (/failed to fetch|network|server unavailable/i.test(message))
+    return th
+      ? "เชื่อมต่ออินเทอร์เน็ตไม่ได้ กรุณาลองใหม่"
+      : "Cannot connect. Please check the internet and try again.";
+  return message;
+}
 function App() {
-  const [lang, setLang] = useState<Language>("th"),
+  const [lang, setLang] = useState<Language>(
+      localStorage.getItem("language") === "en" ? "en" : "th",
+    ),
     [tab, setTab] = useState("today"),
     [signed, setSigned] = useState(Boolean(token)),
     [patients, setPatients] = useState<any[]>([]),
@@ -72,16 +197,23 @@ function App() {
         ? Notification.permission
         : "unsupported",
     ),
-    [large, setLarge] = useState(false),
+    [large, setLarge] = useState(localStorage.getItem("large-text") === "1"),
     [profileEdit, setProfileEdit] = useState(false),
     [caregiver, setCaregiver] = useState(false),
-    [history, setHistory] = useState(false);
+    [history, setHistory] = useState(false),
+    [needsProfile, setNeedsProfile] = useState(false),
+    [snoozing, setSnoozing] = useState(""),
+    [prnFor, setPrnFor] = useState(""),
+    [busy, setBusy] = useState(false);
   const t = words[lang];
+  const L = (th: string, en: string) => (lang === "th" ? th : en);
   const syncing = useRef(false);
   const syncAgain = useRef<string | undefined>(undefined);
   useEffect(() => {
     document.documentElement.lang = lang;
     document.documentElement.style.fontSize = large ? "24px" : "20px";
+    localStorage.setItem("language", lang);
+    localStorage.setItem("large-text", large ? "1" : "0");
   }, [lang, large]);
   async function loadLocal(id = patient) {
     if (!id) return;
@@ -210,8 +342,13 @@ function App() {
         await clearPrivate();
         setS(undefined);
         setPatient("");
-        setMessage("Access revoked. Local app data cleared.");
-      } else setMessage(e.message);
+        setMessage(
+          L(
+            "สิทธิ์การเข้าถึงถูกยกเลิก ลบข้อมูลในเครื่องแล้ว",
+            "Access revoked. Local app data cleared.",
+          ),
+        );
+      } else setMessage(friendlyError(e, lang));
     } finally {
       syncing.current = false;
       const next = syncAgain.current;
@@ -271,14 +408,7 @@ function App() {
         setPatient(selected);
         await loadLocal(selected);
         await sync(selected);
-      } else {
-        const displayName = prompt(t.profile);
-        if (displayName) {
-          const p = await api("/patients", { displayName });
-          setPatient(p.id);
-          await sync(p.id);
-        }
-      }
+      } else setNeedsProfile(true);
     } catch (e: any) {
       const keys = await db.snapshots.toArray();
       const local = keys.filter((x) => x.key.startsWith(actor + ":"));
@@ -291,7 +421,7 @@ function App() {
       if (local.length) {
         setPatient(local[0].value.profile.id);
         await loadLocal(local[0].value.profile.id);
-      } else setMessage(e.message);
+      } else setMessage(friendlyError(e, lang));
     }
   }
   useEffect(() => {
@@ -394,7 +524,9 @@ function App() {
       await loadLocal();
       await sync();
     } catch (e: any) {
-      setMessage("Storage failed: " + e.message);
+      setMessage(
+        L("บันทึกในเครื่องไม่สำเร็จ: ", "Storage failed: ") + e.message,
+      );
       throw e;
     }
   }
@@ -457,7 +589,18 @@ function App() {
       action === "taken" &&
       Date.now() - Date.parse(o.intended_at) > 86400000 &&
       !confirm(
-        "Backdated record for " + o.local_date + " " + o.local_time + "?",
+        L(
+          "บันทึกย้อนหลังสำหรับ " +
+            day(o.local_date, lang) +
+            " " +
+            o.local_time +
+            " ใช่หรือไม่",
+          "Backdated record for " +
+            day(o.local_date, lang) +
+            " " +
+            o.local_time +
+            "?",
+        ),
       )
     )
       return;
@@ -479,7 +622,10 @@ function App() {
         typeof Notification === "undefined"
       )
         throw new Error(
-          "This browser does not support reminders. " + t.install,
+          L(
+            "เบราว์เซอร์นี้ไม่รองรับการแจ้งเตือน ",
+            "This browser does not support reminders. ",
+          ) + t.install,
         );
       if (
         /iPhone|iPad/.test(navigator.userAgent) &&
@@ -490,11 +636,19 @@ function App() {
       setPermission(result);
       if (result !== "granted")
         throw new Error(
-          "Permission denied. Change notification permission in phone settings.",
+          L(
+            "ไม่ได้รับอนุญาต เปิดได้ที่ การตั้งค่า → การแจ้งเตือน → เพื่อนเรื่องยา บน iPhone",
+            "Permission denied. Turn it on in iPhone Settings → Notifications → this app.",
+          ),
         );
       const config = await api("/push/config");
       if (!config.publicKey)
-        throw new Error("VAPID keys are not configured on the server");
+        throw new Error(
+          L(
+            "เซิร์ฟเวอร์ยังไม่ได้ตั้งค่าการแจ้งเตือน",
+            "Reminders are not configured on the server",
+          ),
+        );
       const reg = await navigator.serviceWorker.ready;
       const pad = config.publicKey.replace(/-/g, "+").replace(/_/g, "/");
       const key = Uint8Array.from(atob(pad), (c) => c.charCodeAt(0));
@@ -516,28 +670,61 @@ function App() {
         value: true,
       });
       setRegistered(true);
+      setMessage(
+        L(
+          "เปิดการแจ้งเตือนแล้ว กด “ส่งการแจ้งเตือนทดสอบ” เพื่อทดลอง",
+          "Reminders enabled. Tap “Send test notification” to try it.",
+        ),
+      );
       await reconcile();
     } catch (e: any) {
-      setMessage(e.message);
+      setMessage(friendlyError(e, lang));
+    }
+  }
+  const languagePicker = (
+    <label>
+      {t.language}
+      <select
+        value={lang}
+        onChange={(e) => setLang(e.target.value as Language)}
+      >
+        <option value="th">ไทย</option>
+        <option value="en">English</option>
+      </select>
+    </label>
+  );
+  async function sendCode() {
+    if (!auth) return;
+    setBusy(true);
+    try {
+      const { error } = await auth.auth.signInWithOtp({
+        email: email.trim(),
+        options: { shouldCreateUser: true },
+      });
+      if (error) throw error;
+      setOtpSent(true);
+      setCode("");
+      setMessage("");
+    } catch (e: any) {
+      setMessage(friendlyError(e, lang));
+    } finally {
+      setBusy(false);
     }
   }
   if (!signed)
     return (
       <main className="welcome">
-        <div className="brand-mark">＋</div>
+        <div className="brand-mark" aria-hidden>
+          ＋
+        </div>
         <h1>เพื่อนเรื่องยา</h1>
-        <p>Medication Companion</p>
-        <p>{t.privacy}</p>
-        <label>
-          {t.language}
-          <select
-            value={lang}
-            onChange={(e) => setLang(e.target.value as Language)}
-          >
-            <option value="th">ไทย</option>
-            <option value="en">English</option>
-          </select>
-        </label>
+        <p className="lead">
+          {L(
+            "ช่วยจำเวลาใช้ยา เก็บรายการยา และแสดงให้แพทย์ดูได้ง่าย",
+            "Remember medicine times, keep your medicine list, and show it to your doctor.",
+          )}
+        </p>
+        {languagePicker}
         {!auth && (
           <button
             className="primary"
@@ -549,7 +736,7 @@ function App() {
                 sessionStorage.setItem("actor", actor);
                 await afterLogin();
               } catch (e: any) {
-                setMessage(e.message);
+                setMessage(friendlyError(e, lang));
               }
             }}
           >
@@ -560,59 +747,145 @@ function App() {
           <form
             onSubmit={async (e) => {
               e.preventDefault();
+              if (!otpSent) return sendCode();
+              setBusy(true);
               try {
-                if (!otpSent) {
-                  const { error } = await auth.auth.signInWithOtp({
-                    email,
-                    options: { shouldCreateUser: true },
-                  });
-                  if (error) throw error;
-                  setOtpSent(true);
-                } else {
-                  const { data, error } = await auth.auth.verifyOtp({
-                    email,
-                    token: code,
-                    type: "email",
-                  });
-                  if (error) throw error;
-                  token = data.session!.access_token;
-                  actor = data.user!.id;
-                  await afterLogin();
-                }
+                const { data, error } = await auth.auth.verifyOtp({
+                  email: email.trim(),
+                  token: code.trim(),
+                  type: "email",
+                });
+                if (error) throw error;
+                token = data.session!.access_token;
+                actor = data.user!.id;
+                await afterLogin();
               } catch (e: any) {
-                setMessage(e.message);
+                setMessage(friendlyError(e, lang));
+              } finally {
+                setBusy(false);
               }
             }}
           >
-            <label>
-              Email
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-              />
-            </label>
-            {otpSent && (
+            {!otpSent ? (
               <label>
-                One-time code
+                {t.email}
                 <input
+                  type="email"
                   required
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  autoComplete="one-time-code"
+                  autoComplete="email"
+                  inputMode="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                 />
               </label>
+            ) : (
+              <>
+                <p>
+                  {t.codeSent} <strong>{email}</strong>
+                  <br />
+                  <small>
+                    {L(
+                      "เปิดอีเมลแล้วพิมพ์รหัสตัวเลขที่ได้รับ (อาจอยู่ในโฟลเดอร์ขยะ)",
+                      "Open the email and type the number code (check spam too).",
+                    )}
+                  </small>
+                </p>
+                <label>
+                  {t.code}
+                  <input
+                    required
+                    value={code}
+                    onChange={(e) => setCode(e.target.value.replace(/\s/g, ""))}
+                    autoComplete="one-time-code"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={10}
+                    className="code-input"
+                  />
+                </label>
+              </>
             )}
-            <button>{t.login}</button>
+            <button className="primary" disabled={busy}>
+              {busy ? t.loading : otpSent ? t.signIn : t.sendCode}
+            </button>
+            {otpSent && (
+              <div className="actions">
+                <button type="button" disabled={busy} onClick={sendCode}>
+                  {t.resend}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOtpSent(false);
+                    setCode("");
+                    setMessage("");
+                  }}
+                >
+                  {t.changeEmail}
+                </button>
+              </div>
+            )}
           </form>
         ) : (
           <p>
-            Managed sign-in requires Supabase configuration. Demo uses synthetic
-            data only.
+            {L(
+              "ยังไม่ได้ตั้งค่าการเข้าสู่ระบบ โหมดทดลองใช้ข้อมูลสมมติเท่านั้น",
+              "Managed sign-in requires Supabase configuration. Demo uses synthetic data only.",
+            )}
           </p>
         )}
-        <p role="alert">{message}</p>
+        {message && (
+          <p role="alert" className="warning">
+            {message}
+          </p>
+        )}
+        <details className="about">
+          <summary>
+            {L("ความเป็นส่วนตัวและข้อจำกัด", "Privacy and limits")}
+          </summary>
+          <p>{t.privacy}</p>
+        </details>
+      </main>
+    );
+  if (needsProfile)
+    return (
+      <main className="welcome">
+        <h1>{t.firstProfile}</h1>
+        <p>{t.firstProfileHelp}</p>
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            const displayName = String(
+              new FormData(e.currentTarget).get("displayName") || "",
+            ).trim();
+            if (!displayName) return;
+            setBusy(true);
+            try {
+              const p = await api("/patients", { displayName });
+              setPatients([{ id: p.id, data: { displayName } }]);
+              setPatient(p.id);
+              setNeedsProfile(false);
+              await sync(p.id);
+            } catch (e: any) {
+              setMessage(friendlyError(e, lang));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <label>
+            {L("ชื่อผู้ป่วย", "Patient name")}
+            <input name="displayName" required autoComplete="name" />
+          </label>
+          <button className="primary" disabled={busy}>
+            {busy ? t.loading : t.start2}
+          </button>
+        </form>
+        {message && (
+          <p role="alert" className="warning">
+            {message}
+          </p>
+        )}
       </main>
     );
   return (
@@ -637,7 +910,7 @@ function App() {
           <strong>{view?.profile.data.displayName || "…"}</strong>
           {patients.length > 1 && (
             <label>
-              {t.profile}
+              {L("เลือกผู้ป่วย", "Choose patient")}
               <select
                 value={patient}
                 onChange={async (e) => {
@@ -658,36 +931,53 @@ function App() {
           <small>
             {DateTime.now()
               .setZone(view?.profile.data.timezone || "Asia/Bangkok")
-              .toLocaleString(DateTime.DATE_FULL)}{" "}
-            · {view?.profile.data.timezone}
+              .setLocale(lang)
+              .toLocaleString(DateTime.DATE_HUGE)}
           </small>
           {view &&
             Intl.DateTimeFormat().resolvedOptions().timeZone !==
               view.profile.data.timezone && (
               <p className="warning">
-                Device: {Intl.DateTimeFormat().resolvedOptions().timeZone}.
-                Schedule stays in {view.profile.data.timezone}. Edit a future
-                regimen to change timezone.
+                {L(
+                  `เขตเวลาของโทรศัพท์ (${Intl.DateTimeFormat().resolvedOptions().timeZone}) ต่างจากตารางยา (${view.profile.data.timezone}) เวลาในแอปยังเป็นเวลาของตารางยา หากต้องการเปลี่ยนให้แก้ไขยาแต่ละรายการ`,
+                  `Phone timezone (${Intl.DateTimeFormat().resolvedOptions().timeZone}) differs from the schedule (${view.profile.data.timezone}). Times stay in the schedule timezone; edit a medicine to change it.`,
+                )}
               </p>
             )}
         </section>
-        <div className="sync" role="status">
-          {pending.length ? t.pending : reachable ? t.synced : t.offline}
+        <div
+          className={
+            "sync " + (pending.length ? "pending" : reachable ? "ok" : "off")
+          }
+          role="status"
+        >
+          <span>
+            <span aria-hidden>
+              {pending.length ? "⏳ " : reachable ? "✓ " : "⚠ "}
+            </span>
+            {pending.length ? t.pending : reachable ? t.synced : t.offline}
+          </span>
           <button onClick={() => sync()}>{t.sync}</button>
         </div>
         {view?.scheduleIssues?.map((issue) => (
           <p key={issue.medication_id} className="warning">
-            Schedule requires review / ต้องตรวจสอบเวลา: {issue.reason} ·{" "}
+            {L("ต้องตรวจสอบเวลาใช้ยา", "Schedule requires review")}:{" "}
             {
               view.medications.find((m) => m.id === issue.medication_id)?.data
                 .name
-            }
+            }{" "}
+            · {issue.reason}
           </p>
         ))}
         {message && (
-          <p role="alert" className="warning">
-            {message}
-            <button onClick={() => setMessage("")}>×</button>
+          <p role="alert" className="warning dismissible">
+            <span>{message}</span>
+            <button
+              onClick={() => setMessage("")}
+              aria-label={L("ปิดข้อความ", "Dismiss message")}
+            >
+              ×
+            </button>
           </p>
         )}
         {pending
@@ -697,255 +987,452 @@ function App() {
               <strong>{t.conflict}</strong>
               <p>{o.error}</p>
               <pre>{JSON.stringify(o.current?.data, null, 2)}</pre>
-              <button
-                onClick={async () => {
-                  await db.outbox.delete(o.id);
-                  await loadLocal();
-                }}
-              >
-                Discard local proposal
-              </button>
-              <button
-                onClick={() => {
-                  const m = view?.medications.find(
-                    (m) => m.id === o.resourceId,
-                  );
-                  if (m) {
-                    setEditing({
-                      ...m,
-                      proposed: o.kind === "regimen" ? o.data : undefined,
-                      conflictOpId: o.id,
-                    });
-                  }
-                }}
-              >
-                Review current and proposal
-              </button>
+              <div className="actions">
+                <button
+                  onClick={async () => {
+                    await db.outbox.delete(o.id);
+                    await loadLocal();
+                  }}
+                >
+                  {L("ยกเลิกการแก้ไขในเครื่องนี้", "Discard local proposal")}
+                </button>
+                <button
+                  onClick={() => {
+                    const m = view?.medications.find(
+                      (m) => m.id === o.resourceId,
+                    );
+                    if (m) {
+                      setEditing({
+                        ...m,
+                        proposed: o.kind === "regimen" ? o.data : undefined,
+                        conflictOpId: o.id,
+                      });
+                    }
+                  }}
+                >
+                  {L("ตรวจสอบข้อมูลทั้งสองแบบ", "Review current and proposal")}
+                </button>
+              </div>
             </article>
           ))}
         {!view ? (
-          <p>Loading cached patient data…</p>
+          <p>{needsProfile ? "" : t.loading}</p>
         ) : tab === "today" ? (
-          <>
-            <div className="heading">
-              <h1>{t.today}</h1>
-              <button onClick={() => setHistory(!history)}>{t.history}</button>
-            </div>
-            <p className="muted">
-              {lang === "th"
-                ? "ตรวจสอบคำแนะนำก่อนใช้ยา"
-                : "Review your instructions before using medicine"}
-            </p>
-            <p>
-              {lang === "th" ? "กลุ่มเวลาถัดไป" : "Next scheduled group"}:{" "}
-              {view.occurrences
-                .filter(
-                  (o) =>
-                    o.valid &&
-                    Date.parse(o.intended_at) > Date.now() &&
-                    projectDose(
-                      view.events.filter((e) => e.occurrence_id === o.id),
-                    ).status === "unconfirmed",
-                )
-                .sort(
-                  (a, b) =>
-                    Date.parse(a.intended_at) - Date.parse(b.intended_at),
-                )[0]?.local_time || "—"}
-            </p>
-            {view.occurrences
+          (() => {
+            const statusOf = (o: any) =>
+              projectDose(view.events.filter((e) => e.occurrence_id === o.id));
+            const todays = view.occurrences
               .filter(
                 (o) =>
                   o.valid &&
                   o.local_date ===
                     DateTime.now().setZone(o.timezone).toISODate(),
               )
-              .sort((a, b) => {
-                const recorded = (o: any) =>
-                  ["taken", "skipped"].includes(
-                    projectDose(
-                      view.events.filter((e) => e.occurrence_id === o.id),
-                    ).status,
-                  );
-                return (
-                  Number(recorded(a)) - Number(recorded(b)) ||
-                  Date.parse(a.intended_at) - Date.parse(b.intended_at)
-                );
-              })
-              .map((o) => {
-                const m = view.medications.find(
-                    (m) => m.id === o.medication_id,
-                  ),
-                  r = s?.regimens.find((r) => r.id === o.regimen_id),
-                  p = projectDose(
-                    view.events.filter((e) => e.occurrence_id === o.id),
-                  );
-                if (!m) return null;
-                const future = Date.parse(o.intended_at) > Date.now();
-                const pendingRegimen = pending.some(
-                  (x) => x.kind === "regimen" && x.resourceId === m.id,
-                );
-                return (
-                  <details
-                    key={o.id}
-                    open={p.status === "unconfirmed" || p.status === "conflict"}
-                    className="dose-detail"
-                  >
-                    <summary>
-                      {o.local_time} · {m.data.name} ·{" "}
-                      {p.status === "unconfirmed"
-                        ? t.unconfirmed
-                        : (t as any)[p.status] || p.status}
-                    </summary>
-                    <article className="medicine-card">
-                      <div className="time-chip">
-                        {o.local_time} · {o.timezone}
-                      </div>
-                      <div className="card-body">
-                        <Photo
-                          photos={view.photos.filter(
-                            (p) => p.medication_id === m.id,
-                          )}
-                        />
-                        <div>
-                          <h2>{m.data.name}</h2>
-                          <p>{m.data.strength}</p>
-                          <strong>
-                            {o.data.amount} {o.data.unit} · {r?.data.route}
-                          </strong>
-                          <p>{r?.data.food}</p>
-                          <p>{r?.data.instructions}</p>
-                          <span className="badge">
-                            {p.status === "unconfirmed"
-                              ? t.unconfirmed
-                              : p.status}
-                          </span>
-                        </div>
-                      </div>
-                      {pendingRegimen && <p className="warning">{t.pending}</p>}
-                      <div className="actions">
-                        {p.status === "unconfirmed" ? (
-                          <>
+              .sort(
+                (a, b) => Date.parse(a.intended_at) - Date.parse(b.intended_at),
+              );
+            const open = todays.filter(
+              (o) => !["taken", "skipped"].includes(statusOf(o).status),
+            );
+            const done = todays.filter((o) =>
+              ["taken", "skipped"].includes(statusOf(o).status),
+            );
+            const next = view.occurrences
+              .filter(
+                (o) =>
+                  o.valid &&
+                  Date.parse(o.intended_at) > Date.now() &&
+                  statusOf(o).status === "unconfirmed",
+              )
+              .sort(
+                (a, b) => Date.parse(a.intended_at) - Date.parse(b.intended_at),
+              );
+            const nextGroup = next.filter(
+              (o) => o.intended_at === next[0]?.intended_at,
+            );
+            const groups = [...new Set(open.map((o) => o.local_time))];
+            const card = (o: any) => {
+              const m = view.medications.find((m) => m.id === o.medication_id),
+                r = s?.regimens.find((r) => r.id === o.regimen_id),
+                p = statusOf(o);
+              if (!m) return null;
+              const future = Date.parse(o.intended_at) > Date.now();
+              const late = !future && p.status === "unconfirmed";
+              const pendingRegimen = pending.some(
+                (x) => x.kind === "regimen" && x.resourceId === m.id,
+              );
+              const locked = view.role === "viewer" || pendingRegimen;
+              return (
+                <article
+                  key={o.id}
+                  className={"medicine-card status-" + p.status}
+                >
+                  <div className="card-body">
+                    <Photo
+                      photos={view.photos.filter(
+                        (p) => p.medication_id === m.id,
+                      )}
+                    />
+                    <div>
+                      <h3>{m.data.name}</h3>
+                      {m.data.strength && <p>{m.data.strength}</p>}
+                      <p className="dose-amount">
+                        {o.data.amount} {o.data.unit}
+                        {r?.data.route ? " · " + r.data.route : ""}
+                      </p>
+                      {r?.data.food && <p>🍽 {r.data.food}</p>}
+                      {r?.data.instructions && (
+                        <p className="muted">{r.data.instructions}</p>
+                      )}
+                      <span className="badge">
+                        {statusLabel(p.status, lang)}
+                        {late ? " · " + L("เลยเวลาแล้ว", "past time") : ""}
+                      </span>
+                    </div>
+                  </div>
+                  {pendingRegimen && <p className="warning">{t.pending}</p>}
+                  <div className="actions">
+                    {p.status === "unconfirmed" ? (
+                      snoozing === o.id ? (
+                        <>
+                          <span>{t.snoozeChoose}</span>
+                          {[10, 30].map((minutes) => (
                             <button
-                              className="primary"
-                              disabled={
-                                future ||
-                                view.role === "viewer" ||
-                                pendingRegimen
-                              }
-                              onClick={() => dose(o, "taken")}
-                            >
-                              {t.taken}
-                            </button>
-                            <button
-                              disabled={
-                                view.role === "viewer" || pendingRegimen
-                              }
-                              onClick={() => dose(o, "skipped")}
-                            >
-                              {t.skip}
-                            </button>
-                            <button
-                              disabled={
-                                future ||
-                                view.role === "viewer" ||
-                                pendingRegimen
-                              }
+                              key={minutes}
                               onClick={async () => {
-                                const minutes =
-                                  prompt(
-                                    "Reminder only: 10 or 30 minutes (maximum twice; expires 15 minutes after scheduled time)",
-                                  ) || "";
-                                if (["10", "30"].includes(minutes))
-                                  await queue("snooze", o.id, 0, {
-                                    occurrenceId: o.id,
-                                    minutes: Number(minutes),
-                                  });
+                                setSnoozing("");
+                                await queue("snooze", o.id, 0, {
+                                  occurrenceId: o.id,
+                                  minutes,
+                                });
                               }}
                             >
-                              {t.later}
+                              {minutes} {t.minutes}
                             </button>
-                          </>
-                        ) : p.status === "conflict" ? (
-                          <button
-                            onClick={async () => {
-                              const status = prompt(
-                                "Review both device records. Resolved status: taken, skipped, unconfirmed",
-                              );
-                              if (
-                                ["taken", "skipped", "unconfirmed"].includes(
-                                  status || "",
-                                )
-                              )
-                                await queue("dose", o.id, 0, {
-                                  occurrenceId: o.id,
-                                  medicationId: m.id,
-                                  action: "resolve",
-                                  status,
-                                  baseEventIds: p.heads,
-                                });
-                            }}
-                          >
-                            Review dose conflict
+                          ))}
+                          <button onClick={() => setSnoozing("")}>
+                            {t.cancel}
                           </button>
-                        ) : (
+                          <small>
+                            {L(
+                              "เป็นการเตือนซ้ำเท่านั้น ไม่ได้เปลี่ยนเวลาใช้ยา (สูงสุด 2 ครั้ง)",
+                              "Reminder only; it does not change the prescribed time (at most twice).",
+                            )}
+                          </small>
+                        </>
+                      ) : (
+                        <>
                           <button
+                            className="primary"
+                            disabled={future || locked}
+                            onClick={() => dose(o, "taken")}
+                          >
+                            ✓ {t.taken}
+                          </button>
+                          <button
+                            disabled={future || locked}
+                            onClick={() => setSnoozing(o.id)}
+                          >
+                            {t.later}
+                          </button>
+                          <button
+                            disabled={locked}
+                            onClick={() => dose(o, "skipped")}
+                          >
+                            {t.skip}
+                          </button>
+                          {future && (
+                            <small>
+                              {L(
+                                "บันทึกได้เมื่อถึงเวลา",
+                                "You can record this when it is time",
+                              )}
+                            </small>
+                          )}
+                        </>
+                      )
+                    ) : p.status === "conflict" ? (
+                      <>
+                        <p>
+                          {L(
+                            "มีการบันทึกจาก 2 เครื่องไม่ตรงกัน เลือกสถานะที่ถูกต้อง:",
+                            "Two devices recorded different results. Choose the correct status:",
+                          )}
+                        </p>
+                        {["taken", "skipped", "unconfirmed"].map((status) => (
+                          <button
+                            key={status}
                             disabled={view.role === "viewer"}
-                            onClick={() => dose(o, "undo")}
+                            onClick={() =>
+                              queue("dose", o.id, 0, {
+                                occurrenceId: o.id,
+                                medicationId: m.id,
+                                action: "resolve",
+                                status,
+                                baseEventIds: p.heads,
+                              })
+                            }
                           >
-                            {t.undo}
+                            {statusLabel(status, lang)}
                           </button>
-                        )}
-                      </div>
-                    </article>
-                  </details>
-                );
-              })}
-            {!view.occurrences.some(
-              (o) =>
-                o.valid &&
-                o.local_date === DateTime.now().setZone(o.timezone).toISODate(),
-            ) && <div className="empty">{t.empty}</div>}
-            <h2>{t.prn}</h2>
-            {view.medications
-              .filter((m) => current(m.id)?.data.status === "as-needed")
-              .map((m) => (
-                <article key={m.id}>
-                  <h3>{m.data.name}</h3>
-                  <p>{current(m.id)?.data.instructions}</p>
-                  <button
-                    disabled={view.role === "viewer"}
-                    onClick={async () => {
-                      const at = prompt(
-                        "Actual administration time (ISO timestamp)",
-                        new Date().toISOString(),
-                      );
-                      if (at)
-                        await queue("dose", m.id, 0, {
-                          occurrenceId: null,
-                          medicationId: m.id,
-                          action: "as-needed",
-                          baseEventIds: [],
-                          actualAt: at,
-                        });
-                    }}
-                  >
-                    {t.prnRecord}
-                  </button>
+                        ))}
+                      </>
+                    ) : (
+                      <button
+                        disabled={view.role === "viewer"}
+                        onClick={() => dose(o, "undo")}
+                      >
+                        {t.undo}
+                      </button>
+                    )}
+                  </div>
                 </article>
-              ))}
-            {history && (
-              <section>
-                <h2>{t.history}</h2>
-                {view.events.map((e) => (
-                  <p key={e.id}>
-                    {e.action} · {e.actual_at || e.client_at} · {e.id}{" "}
-                    {e.pending ? "(pending)" : ""}
-                  </p>
+              );
+            };
+            const prn = view.medications.filter(
+              (m) => current(m.id)?.data.status === "as-needed",
+            );
+            return (
+              <>
+                <div className="heading">
+                  <h1>{t.today}</h1>
+                  <button onClick={() => setHistory(!history)}>
+                    {t.history}
+                  </button>
+                </div>
+                {(todays.length > 0 || nextGroup.length > 0) && (
+                  <section className="next-dose" aria-label={t.nextDose}>
+                    {nextGroup.length ? (
+                      <>
+                        <span>{t.nextDose}</span>
+                        <strong className="next-time">
+                          {nextGroup[0].local_time}
+                          {nextGroup[0].local_date !==
+                          DateTime.now()
+                            .setZone(nextGroup[0].timezone)
+                            .toISODate()
+                            ? " · " + day(nextGroup[0].local_date, lang)
+                            : ""}
+                        </strong>
+                        <span>
+                          {DateTime.fromISO(nextGroup[0].intended_at)
+                            .setLocale(lang)
+                            .toRelative()}{" "}
+                          ·{" "}
+                          {nextGroup
+                            .map(
+                              (o) =>
+                                view.medications.find(
+                                  (m) => m.id === o.medication_id,
+                                )?.data.name,
+                            )
+                            .filter(Boolean)
+                            .join(", ")}
+                        </span>
+                      </>
+                    ) : (
+                      <strong>{t.noMore}</strong>
+                    )}
+                    <span className="progress">
+                      {t.progress}: {done.length} / {todays.length}
+                    </span>
+                  </section>
+                )}
+                <p className="muted">
+                  {L(
+                    "ตรวจสอบคำแนะนำก่อนใช้ยา",
+                    "Review your instructions before using medicine",
+                  )}
+                </p>
+                {groups.map((time) => (
+                  <section key={time} className="time-group">
+                    <h2 className="time-chip">
+                      <span aria-hidden>🕒 </span>
+                      {time}
+                    </h2>
+                    {open.filter((o) => o.local_time === time).map(card)}
+                  </section>
                 ))}
-                <p>Self-reported records do not prove administration.</p>
-              </section>
-            )}
-          </>
+                {!todays.length && (
+                  <div className="empty">
+                    {view.medications.length ? (
+                      <p>
+                        {L(
+                          "วันนี้ไม่มียาที่ต้องใช้ตามเวลา",
+                          "No scheduled medicines today",
+                        )}
+                      </p>
+                    ) : (
+                      <>
+                        <p>{t.empty}</p>
+                        <button
+                          className="primary"
+                          onClick={() => setTab("medicines")}
+                        >
+                          ＋ {t.add}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+                {done.length > 0 && (
+                  <details className="done-group">
+                    <summary>
+                      {L("บันทึกแล้ว", "Already recorded")} ({done.length})
+                    </summary>
+                    {done.map(card)}
+                  </details>
+                )}
+                {prn.length > 0 && <h2>{t.prn}</h2>}
+                {prn.map((m) => {
+                  const last = view.events
+                    .filter(
+                      (e) =>
+                        e.action === "as-needed" && e.medication_id === m.id,
+                    )
+                    .sort(
+                      (a, b) =>
+                        Date.parse(b.actual_at || b.client_at) -
+                        Date.parse(a.actual_at || a.client_at),
+                    )[0];
+                  return (
+                    <article key={m.id} className="medicine-card">
+                      <h3>{m.data.name}</h3>
+                      <p>{current(m.id)?.data.instructions}</p>
+                      {current(m.id)?.data.prnMaximum && (
+                        <p className="muted">
+                          {L("สูงสุด", "Maximum")}:{" "}
+                          {current(m.id)?.data.prnMaximum}
+                        </p>
+                      )}
+                      <p className="muted">
+                        {t.lastUsed}:{" "}
+                        {last
+                          ? when(
+                              last.actual_at || last.client_at,
+                              lang,
+                              view.profile.data.timezone,
+                            )
+                          : "—"}
+                      </p>
+                      {prnFor === m.id ? (
+                        <form
+                          onSubmit={async (e) => {
+                            e.preventDefault();
+                            const value = String(
+                              new FormData(e.currentTarget).get("at") || "",
+                            );
+                            const at = new Date(value);
+                            if (
+                              isNaN(at.getTime()) ||
+                              at.getTime() > Date.now() + 60000
+                            ) {
+                              setMessage(
+                                L(
+                                  "เวลาไม่ถูกต้อง (ต้องไม่เป็นเวลาในอนาคต)",
+                                  "Invalid time (cannot be in the future)",
+                                ),
+                              );
+                              return;
+                            }
+                            setPrnFor("");
+                            await queue("dose", m.id, 0, {
+                              occurrenceId: null,
+                              medicationId: m.id,
+                              action: "as-needed",
+                              baseEventIds: [],
+                              actualAt: at.toISOString(),
+                            });
+                          }}
+                        >
+                          <label>
+                            {t.whenTaken}
+                            <input
+                              type="datetime-local"
+                              name="at"
+                              required
+                              defaultValue={DateTime.now().toFormat(
+                                "yyyy-MM-dd'T'HH:mm",
+                              )}
+                            />
+                          </label>
+                          <div className="actions">
+                            <button className="primary">{t.recordNow}</button>
+                            <button type="button" onClick={() => setPrnFor("")}>
+                              {t.cancel}
+                            </button>
+                          </div>
+                        </form>
+                      ) : (
+                        <button
+                          disabled={view.role === "viewer"}
+                          onClick={() => setPrnFor(m.id)}
+                        >
+                          {t.prnRecord}
+                        </button>
+                      )}
+                    </article>
+                  );
+                })}
+                {history && (
+                  <section>
+                    <h2>{t.history}</h2>
+                    {[...view.events]
+                      .sort(
+                        (a, b) =>
+                          Date.parse(b.actual_at || b.client_at) -
+                          Date.parse(a.actual_at || a.client_at),
+                      )
+                      .slice(0, 100)
+                      .map((e) => {
+                        const occurrence = view.occurrences.find(
+                          (o) => o.id === e.occurrence_id,
+                        );
+                        const med = view.medications.find(
+                          (m) =>
+                            m.id ===
+                            (e.medication_id || occurrence?.medication_id),
+                        );
+                        return (
+                          <p key={e.id} className="history-row">
+                            <strong>{med?.data.name || "—"}</strong> ·{" "}
+                            {e.action === "as-needed"
+                              ? t.prn
+                              : e.action === "undo"
+                                ? L("ยกเลิกบันทึก", "Undone")
+                                : e.action === "resolve"
+                                  ? L("แก้ไขข้อขัดแย้ง", "Resolved")
+                                  : statusLabel(e.action, lang)}{" "}
+                            ·{" "}
+                            {when(
+                              e.actual_at || e.client_at,
+                              lang,
+                              view.profile.data.timezone,
+                            )}
+                            {occurrence
+                              ? " (" +
+                                L("นัดเวลา ", "scheduled ") +
+                                occurrence.local_time +
+                                ")"
+                              : ""}
+                            {e.pending
+                              ? " · " + L("รอส่งขึ้นเซิร์ฟเวอร์", "pending")
+                              : ""}
+                          </p>
+                        );
+                      })}
+                    {!view.events.length && <p>—</p>}
+                    <p className="muted">
+                      {L(
+                        "การบันทึกเป็นข้อมูลที่ผู้ใช้รายงานเอง ไม่ได้พิสูจน์ว่าใช้ยาจริง",
+                        "Self-reported records do not prove administration.",
+                      )}
+                    </p>
+                  </section>
+                )}
+              </>
+            );
+          })()
         ) : tab === "medicines" ? (
           <>
             <div className="heading">
@@ -963,13 +1450,14 @@ function App() {
             <label>
               {t.search}
               <input
+                type="search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
             </label>
             <div className="filters">
-              <button onClick={() => setByTime(!byTime)}>
-                {byTime ? t.bytime : t.bymedicine}
+              <button onClick={() => setByTime(!byTime)} aria-pressed={byTime}>
+                ⇅ {byTime ? t.bytime : t.bymedicine}
               </button>
               <select
                 aria-label={t.status}
@@ -1020,14 +1508,14 @@ function App() {
                       <h2>{m.data.name}</h2>
                       <p>{m.data.strength}</p>
                       <p>{current(m.id)?.data.instructions || t.draft}</p>
-                      <p>
-                        {current(m.id)
-                          ?.data.slots.map(
-                            (s: any) =>
-                              s.time + " · " + s.amount + " " + s.unit,
-                          )
-                          .join(" / ")}
-                      </p>
+                      {current(m.id)?.data.slots.map((s: any) => (
+                        <p key={s.id} className="dose-amount">
+                          🕒 {s.time} · {s.amount} {s.unit}
+                          {s.weekdays.length < 7
+                            ? " · " + weekdaysText(s.weekdays, lang)
+                            : ""}
+                        </p>
+                      ))}
                       <span className="badge">
                         {(t as any)[current(m.id)?.data.status] ||
                           current(m.id)?.data.status ||
@@ -1041,7 +1529,12 @@ function App() {
             {!view.medications.length && (
               <div className="empty">
                 {t.empty}
-                <p>Manual entry works without a photo.</p>
+                <p>
+                  {L(
+                    "กด “＋ เพิ่มยา” ด้านบน ไม่จำเป็นต้องมีรูปถ่าย",
+                    "Tap “＋ Add medicine” above. A photo is optional.",
+                  )}
+                </p>
               </div>
             )}
           </>
@@ -1054,7 +1547,10 @@ function App() {
                   try {
                     await exportPdf(view, pending.length > 0);
                   } catch (e: any) {
-                    setMessage("PDF export failed: " + e.message);
+                    setMessage(
+                      L("สร้าง PDF ไม่สำเร็จ: ", "PDF export failed: ") +
+                        e.message,
+                    );
                   }
                 }}
               >
@@ -1063,8 +1559,8 @@ function App() {
             </div>
             <p className="warning">{t.summary}</p>
             <p>
-              {view.profile.data.displayName} ·{" "}
-              {view.profile.data.dob || "DOB: —"}
+              <strong>{view.profile.data.displayName}</strong> ·{" "}
+              {L("วันเกิด", "DOB")}: {day(view.profile.data.dob, lang)}
             </p>
             <p>
               {t.allergy}:{" "}
@@ -1077,31 +1573,46 @@ function App() {
               </p>
             ))}
             <small>
-              Snapshot: {view.serverAt} · Review:{" "}
-              {view.profile.data.reviewedAt || "Unknown"} · {view.role}
+              {L("ข้อมูล ณ", "Data as of")}:{" "}
+              {when(view.serverAt, lang, view.profile.data.timezone)} ·{" "}
+              {L("ทบทวนล่าสุด", "Last reviewed")}:{" "}
+              {view.profile.data.reviewedAt
+                ? when(
+                    view.profile.data.reviewedAt,
+                    lang,
+                    view.profile.data.timezone,
+                  )
+                : t.unknown}
             </small>
             {summaryRows(view).map(({ medicine: m, current: r, future }) => (
               <article key={m.id}>
                 <h2>{m.data.name}</h2>
                 <p>
-                  {m.data.generic} {m.data.brand} · {m.data.strength} ·{" "}
-                  {m.data.form} · {m.data.productType}
+                  {[m.data.generic, m.data.brand, m.data.strength]
+                    .filter(Boolean)
+                    .join(" · ")}
+                  {" · "}
+                  {formNames[lang][m.data.form] || m.data.form} ·{" "}
+                  {productNames[lang][m.data.productType] || m.data.productType}
                 </p>
                 <p>
-                  {r?.data.status || t.draft} · {r?.data.route || m.data.route}
-                </p>
-                <p>{r?.data.instructions || "Unknown instructions"}</p>
-                <p>
-                  {r?.data.slots
-                    .map(
-                      (x: any) =>
-                        `${x.time} · ${x.amount} ${x.unit} · days ${x.weekdays.join(",")}`,
-                    )
-                    .join(" / ")}
+                  {statusLabel(r?.data.status || "draft", lang)} ·{" "}
+                  {r?.data.route || m.data.route}
                 </p>
                 <p>
-                  {r?.data.food} · {r?.data.start} — {r?.data.end || "—"} ·{" "}
-                  {r?.data.timezone}
+                  {r?.data.instructions ||
+                    L("ไม่มีคำแนะนำที่บันทึกไว้", "No instructions recorded")}
+                </p>
+                {r?.data.slots.map((x: any) => (
+                  <p key={x.id}>
+                    🕒 {x.time} · {x.amount} {x.unit} ·{" "}
+                    {weekdaysText(x.weekdays, lang)}
+                  </p>
+                ))}
+                <p>
+                  {r?.data.food ? r.data.food + " · " : ""}
+                  {day(r?.data.start, lang)} —{" "}
+                  {r?.data.end ? day(r.data.end, lang) : "…"}
                 </p>
                 <p>
                   {m.data.purpose} · {t.source}:{" "}
@@ -1109,13 +1620,18 @@ function App() {
                 </p>
                 <span className="badge">
                   {m.data.verified
-                    ? "Verification recorded"
-                    : "Unverified / ยังไม่ตรวจสอบ"}
+                    ? L("มีบันทึกการตรวจสอบ", "Verification recorded")
+                    : L(
+                        "ยังไม่ได้ตรวจสอบโดยผู้เชี่ยวชาญ",
+                        "Not professionally verified",
+                      )}
                 </span>
                 {r?.pending && <p className="warning">{t.pending}</p>}
                 {future.map((f) => (
                   <p key={f.id}>
-                    {t.future}: {f.effective_at} · {f.data.instructions}
+                    {t.future}:{" "}
+                    {when(f.effective_at, lang, view.profile.data.timezone)} ·{" "}
+                    {f.data.instructions}
                   </p>
                 ))}
               </article>
@@ -1141,7 +1657,12 @@ function App() {
       </nav>
       {editing && view && (
         <Modal
-          title={t.review + " · " + view.profile.data.displayName}
+          title={
+            (editing.version ? L("แก้ไขยา", "Edit medicine") : t.add) +
+            " · " +
+            view.profile.data.displayName
+          }
+          closeLabel={L("ปิด", "Close")}
           close={() => setEditing(undefined)}
         >
           <MedicineForm
@@ -1165,7 +1686,10 @@ function App() {
                     m.strength !== editing.data.strength ||
                     m.form !== editing.data.form) &&
                   !confirm(
-                    "Is this only a spelling/label correction of the same medicine? For a different medicine, cancel and add a new record.",
+                    L(
+                      "เป็นการแก้คำสะกดหรือฉลากของยาตัวเดิมใช่หรือไม่ หากเป็นยาคนละตัว ให้กดยกเลิกแล้วเพิ่มยาใหม่",
+                      "Is this only a spelling/label correction of the same medicine? For a different medicine, cancel and add a new record.",
+                    ),
                   )
                 )
                   return;
@@ -1183,7 +1707,12 @@ function App() {
                   ) ||
                   file.size > 8 * 1024 * 1024
                 )
-                  throw new Error("Use JPEG, PNG or WebP, at most 8 MB");
+                  throw new Error(
+                    L(
+                      "ใช้รูป JPEG, PNG หรือ WebP ขนาดไม่เกิน 8 MB",
+                      "Use JPEG, PNG or WebP, at most 8 MB",
+                    ),
+                  );
                 await db.photos.put({
                   id: crypto.randomUUID(),
                   patientId: patient,
@@ -1204,68 +1733,127 @@ function App() {
         <Modal
           title={detail.data.name + " · " + view.profile.data.displayName}
           close={() => setDetail(undefined)}
+          closeLabel={L("ปิด", "Close")}
         >
           <Photo
             photos={view.photos.filter((p) => p.medication_id === detail.id)}
           />
           <p>
-            {detail.data.strength} · {detail.data.route}
+            {[
+              detail.data.strength,
+              formNames[lang][detail.data.form],
+              detail.data.route,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
           </p>
+          {detail.data.purpose && (
+            <p>
+              {t.purpose}: {detail.data.purpose}
+            </p>
+          )}
           <p>{current(detail.id)?.data.instructions}</p>
-          <button
-            disabled={view.role === "viewer"}
-            onClick={() => {
-              setEditing(detail);
-              setDetail(undefined);
-            }}
-          >
-            {t.review}
-          </button>
-          {["paused", "active", "stopped"].map((status) => (
+          {current(detail.id)?.data.slots.map((x: any) => (
+            <p key={x.id} className="dose-amount">
+              🕒 {x.time} · {x.amount} {x.unit} ·{" "}
+              {weekdaysText(x.weekdays, lang)}
+            </p>
+          ))}
+          <p>
+            {t.status}:{" "}
+            <span className="badge">
+              {statusLabel(current(detail.id)?.data.status || "draft", lang)}
+            </span>
+          </p>
+          <div className="actions">
             <button
-              key={status}
-              disabled={view.role === "viewer" || !current(detail.id)}
-              onClick={async () => {
-                const r = current(detail.id)?.data;
-                if (
-                  r &&
-                  confirm(
-                    `${status}: server reminders change only after synchronization. Confirm?`,
-                  )
-                )
-                  await queue("regimen", detail.id, detail.version, {
-                    ...r,
-                    status,
-                    effectiveAt: new Date().toISOString(),
-                    effectiveMode: "on-commit",
-                    reason: status,
-                  });
+              className="primary"
+              disabled={view.role === "viewer"}
+              onClick={() => {
+                setEditing(detail);
                 setDetail(undefined);
               }}
             >
-              {(t as any)[status]}
+              ✎ {L("แก้ไขข้อมูลยา", "Edit medicine")}
             </button>
-          ))}
+            {(
+              [
+                ["paused", L("พักการใช้ยา", "Pause")],
+                ["active", L("กลับมาใช้ยา", "Resume")],
+                ["stopped", L("หยุดใช้ยา", "Stop")],
+              ] as const
+            )
+              .filter(([status]) => {
+                const now = current(detail.id)?.data.status;
+                return status === "paused"
+                  ? now === "active" || now === "as-needed"
+                  : status === "active"
+                    ? now === "paused" || now === "stopped"
+                    : now !== "stopped";
+              })
+              .map(([status, label]) => (
+                <button
+                  key={status}
+                  disabled={view.role === "viewer" || !current(detail.id)}
+                  onClick={async () => {
+                    const r = current(detail.id)?.data;
+                    if (
+                      r &&
+                      confirm(
+                        label +
+                          " " +
+                          detail.data.name +
+                          "? " +
+                          L(
+                            "การแจ้งเตือนจากเซิร์ฟเวอร์จะเปลี่ยนหลังซิงค์ข้อมูลแล้ว ประวัติเดิมยังเก็บไว้",
+                            "Server reminders change after synchronization. History is kept.",
+                          ),
+                      )
+                    ) {
+                      try {
+                        await queue("regimen", detail.id, detail.version, {
+                          ...r,
+                          status,
+                          effectiveAt: new Date().toISOString(),
+                          effectiveMode: "on-commit",
+                          reason: status,
+                        });
+                      } catch {
+                        /* queue reports storage failures */
+                      }
+                    }
+                    setDetail(undefined);
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+          </div>
           <h2>{t.history}</h2>
           {[...view.regimens, ...(view.retiredRegimens || [])]
             .filter((r) => r.medication_id === detail.id)
             .sort(
-              (a, b) => Date.parse(a.effective_at) - Date.parse(b.effective_at),
+              (a, b) => Date.parse(b.effective_at) - Date.parse(a.effective_at),
             )
             .map((r) => (
               <article key={r.id}>
                 <p>
-                  {r.effective_at} · {r.data.status}{" "}
+                  <strong>
+                    {when(r.effective_at, lang, view.profile.data.timezone)}
+                  </strong>{" "}
+                  · {statusLabel(r.data.status, lang)}{" "}
                   {r.pending
-                    ? "Pending"
+                    ? L("(รอซิงค์)", "(pending)")
                     : r.replacement_id
-                      ? "Superseded / ถูกแทนที่"
+                      ? L("(ถูกแทนที่แล้ว)", "(superseded)")
                       : ""}
                 </p>
                 <p>{r.data.instructions}</p>
-                <p>
-                  {r.data.source} · {r.data.reason} · {r.actor_id}
-                </p>
+                {(r.data.source || r.data.reason) && (
+                  <p className="muted">
+                    {[r.data.source, r.data.reason].filter(Boolean).join(" · ")}
+                  </p>
+                )}
               </article>
             ))}
         </Modal>
@@ -1274,188 +1862,267 @@ function App() {
         <Modal
           title={t.settings + " · " + view.profile.data.displayName}
           close={() => setSettings(false)}
+          closeLabel={L("ปิด", "Close")}
         >
-          <label>
-            {t.language}
-            <select
-              value={lang}
-              onChange={(e) => {
-                setLang(e.target.value as Language);
-                if (view.role === "owner")
-                  queue("profile", patient, view.profile.version, {
-                    ...view.profile.data,
-                    language: e.target.value,
-                  });
-              }}
-            >
-              <option value="th">ไทย</option>
-              <option value="en">English</option>
-            </select>
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={large}
-              onChange={(e) => setLarge(e.target.checked)}
-            />
-            Large text / ตัวอักษรใหญ่
-          </label>
-          <button onClick={() => setProfileEdit(true)}>{t.profile}</button>
-          <button onClick={() => setCaregiver(true)}>{t.caregiver}</button>
-          <h2>{t.enable}</h2>
-          <p>{t.install}</p>
-          <ol className="install-guide">
-            <li>
-              <span aria-hidden>↑</span>Safari: Share / แชร์
-            </li>
-            <li>
-              <span aria-hidden>＋</span>Add to Home Screen /
-              เพิ่มไปยังหน้าจอโฮม
-            </li>
-            <li>
-              <span aria-hidden>▣</span>Open the new icon / เปิดจากไอคอนใหม่
-            </li>
-          </ol>
-          <ol>
-            <li>
-              Home Screen / หน้าจอโฮม:{" "}
-              {matchMedia("(display-mode: standalone)").matches
-                ? "installed"
-                : "not detected"}
-            </li>
-            <li>Permission / การอนุญาต: {permission}</li>
-            <li>
-              Subscription / การลงทะเบียน:{" "}
-              {registered
-                ? "registered on server / ลงทะเบียนบนเซิร์ฟเวอร์แล้ว"
-                : "not registered"}
-            </li>
-            <li>
-              Test / ทดสอบ:{" "}
-              {seen
-                ? "user confirmed / ผู้ใช้ยืนยันแล้ว"
-                : "not confirmed / ยังไม่ยืนยัน"}
-            </li>
-            <li>Server sync: {view.serverAt}</li>
-          </ol>
-          <button onClick={reminders}>{t.enable}</button>
-          <button
-            onClick={async () => {
-              try {
-                const r = await api("/push/test", {
-                  deviceId,
-                  patientId: patient,
-                });
-                await db.meta.put({
-                  key: "last-test:" + deviceId,
-                  value: r.id,
-                });
-                setMessage(
-                  "Test " +
-                    r.state +
-                    " — provider acceptance does not prove display.",
-                );
-              } catch (e: any) {
-                setMessage(e.message);
-              }
-            }}
-          >
-            {t.test}
-          </button>
-          <button
-            onClick={async () => {
-              const job = (await db.meta.get("last-test:" + deviceId))?.value;
-              if (!job) {
-                setMessage("Send a test first / ส่งทดสอบก่อน");
-                return;
-              }
-              try {
-                await api("/push/observations", {
-                  jobId: job,
-                  deviceId,
-                  kind: "test-seen",
-                });
-                setSeen(true);
-                await db.meta.put({
-                  key: "test-seen:" + deviceId,
-                  value: new Date().toISOString(),
-                });
-              } catch (e: any) {
-                setMessage(e.message);
-              }
-            }}
-          >
-            {t.seen}
-          </button>
-          <p>
-            No exact-time guarantee. Focus/silent mode and connectivity affect
-            display. Offline dose logs cannot immediately stop server reminders.
-          </p>
-          {devices.map((d) => (
-            <p key={d.id}>
-              {d.label} · {d.revoked_at ? "revoked" : "registered"}{" "}
-              <button
-                onClick={async () => {
-                  await api("/devices/" + d.id, undefined, "DELETE");
-                  await reconcile();
+          <section className="settings-group">
+            <h3>{L("การแสดงผล", "Display")}</h3>
+            <label>
+              {t.language}
+              <select
+                value={lang}
+                onChange={(e) => {
+                  setLang(e.target.value as Language);
+                  if (view.role === "owner")
+                    queue("profile", patient, view.profile.version, {
+                      ...view.profile.data,
+                      language: e.target.value,
+                    }).catch(() => {});
                 }}
               >
-                Revoke
-              </button>
+                <option value="th">ไทย</option>
+                <option value="en">English</option>
+              </select>
+            </label>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={large}
+                onChange={(e) => setLarge(e.target.checked)}
+              />
+              {t.largeText} / Large text
+            </label>
+          </section>
+          <section className="settings-group">
+            <h3>{t.remindersOn}</h3>
+            <p>{t.install}</p>
+            <ol className="install-guide">
+              <li>
+                <span aria-hidden>↑</span>
+                {L("Safari: กดปุ่มแชร์", "Safari: tap Share")}
+              </li>
+              <li>
+                <span aria-hidden>＋</span>
+                {L("เพิ่มไปยังหน้าจอโฮม", "Add to Home Screen")}
+              </li>
+              <li>
+                <span aria-hidden>▣</span>
+                {L("เปิดแอปจากไอคอนใหม่", "Open the app from the new icon")}
+              </li>
+            </ol>
+            <ul className="checklist">
+              {(
+                [
+                  [
+                    matchMedia("(display-mode: standalone)").matches,
+                    L("ติดตั้งบนหน้าจอโฮม", "Installed on Home Screen"),
+                  ],
+                  [
+                    permission === "granted",
+                    L("อนุญาตการแจ้งเตือน", "Notifications allowed") +
+                      (permission === "denied"
+                        ? L(
+                            " (ถูกปฏิเสธ — เปิดในการตั้งค่า iPhone)",
+                            " (denied — change in iPhone Settings)",
+                          )
+                        : ""),
+                  ],
+                  [
+                    registered,
+                    L("ลงทะเบียนกับเซิร์ฟเวอร์แล้ว", "Registered with server"),
+                  ],
+                  [
+                    seen,
+                    L(
+                      "ยืนยันว่าเห็นการแจ้งเตือนทดสอบ",
+                      "Test notification seen",
+                    ),
+                  ],
+                ] as const
+              ).map(([ok, label]) => (
+                <li key={label} className={ok ? "ok" : "todo"}>
+                  <span aria-hidden>{ok ? "✓" : "○"}</span> {label}
+                  <span className="sr-only">
+                    {ok
+                      ? L(" — เรียบร้อย", " — done")
+                      : L(" — ยังไม่เสร็จ", " — not done")}
+                  </span>
+                </li>
+              ))}
+              <li>
+                {L("ซิงค์ล่าสุด", "Last server sync")}:{" "}
+                {when(view.serverAt, lang, view.profile.data.timezone)}
+              </li>
+            </ul>
+            <button className="primary" onClick={reminders}>
+              {t.enable}
+            </button>
+            <button
+              onClick={async () => {
+                try {
+                  const r = await api("/push/test", {
+                    deviceId,
+                    patientId: patient,
+                  });
+                  await db.meta.put({
+                    key: "last-test:" + deviceId,
+                    value: r.id,
+                  });
+                  setMessage(
+                    L(
+                      "ส่งการแจ้งเตือนทดสอบแล้ว หากเห็นบนโทรศัพท์ให้กด “ฉันเห็นการแจ้งเตือนทดสอบแล้ว”",
+                      "Test sent. If it appears on your phone, tap “I saw the test notification”.",
+                    ),
+                  );
+                } catch (e: any) {
+                  setMessage(friendlyError(e, lang));
+                }
+              }}
+            >
+              {t.test}
+            </button>
+            <button
+              onClick={async () => {
+                const job = (await db.meta.get("last-test:" + deviceId))?.value;
+                if (!job) {
+                  setMessage(
+                    L("กรุณาส่งการแจ้งเตือนทดสอบก่อน", "Send a test first"),
+                  );
+                  return;
+                }
+                try {
+                  await api("/push/observations", {
+                    jobId: job,
+                    deviceId,
+                    kind: "test-seen",
+                  });
+                  setSeen(true);
+                  await db.meta.put({
+                    key: "test-seen:" + deviceId,
+                    value: new Date().toISOString(),
+                  });
+                } catch (e: any) {
+                  setMessage(friendlyError(e, lang));
+                }
+              }}
+            >
+              {t.seen}
+            </button>
+            <p className="muted">
+              {L(
+                "ไม่รับประกันเวลาแจ้งเตือนที่แน่นอน โหมดโฟกัส/ปิดเสียง และอินเทอร์เน็ตมีผลต่อการแสดงผล การบันทึกขณะออฟไลน์ยังหยุดการแจ้งเตือนจากเซิร์ฟเวอร์ไม่ได้ทันที",
+                "No exact-time guarantee. Focus/silent mode and connectivity affect display. Offline dose logs cannot immediately stop server reminders.",
+              )}
             </p>
-          ))}
-          <p>{t.privacy}</p>
-          <button
-            onClick={async () => {
-              const result = await navigator.storage?.persist?.();
-              setMessage(
-                "Storage persistence: " +
-                  Boolean(result) +
-                  "; this is not a backup.",
-              );
-            }}
-          >
-            Request persistent storage
-          </button>
-          <button
-            disabled={view.role !== "owner"}
-            onClick={async () => {
-              const data = await api("/account/export", {});
-              download(
-                JSON.stringify(data, null, 2),
-                "medication-account.json",
-                "application/json",
-              );
-            }}
-          >
-            {t.export}
-          </button>
-          <button
-            disabled={view.role !== "owner"}
-            onClick={async () => {
-              if (
-                prompt("Sign in again first. Type DELETE to delete account") !==
-                "DELETE"
-              )
-                return;
-              try {
-                await api("/account", { confirm: "DELETE" }, "DELETE");
-                await clearPrivate();
-                if (auth) await auth.auth.signOut();
-                sessionStorage.clear();
-                token = "";
-                actor = "";
-                setSigned(false);
-                setS(undefined);
-                setPatient("");
-              } catch (e: any) {
-                setMessage(e.message);
-              }
-            }}
-          >
-            {t.delete}
-          </button>
-          <button onClick={logout}>{t.logout}</button>
+            {devices.length > 0 && (
+              <>
+                <h4>{L("อุปกรณ์ที่ลงทะเบียน", "Registered devices")}</h4>
+                {devices.map((d) => (
+                  <p key={d.id} className="device-row">
+                    <span>
+                      {d.label}
+                      {d.id === deviceId
+                        ? L(" (เครื่องนี้)", " (this device)")
+                        : ""}{" "}
+                      ·{" "}
+                      {d.revoked_at
+                        ? L("ยกเลิกแล้ว", "revoked")
+                        : L("ใช้งานอยู่", "registered")}
+                    </span>
+                    {!d.revoked_at && (
+                      <button
+                        onClick={async () => {
+                          await api("/devices/" + d.id, undefined, "DELETE");
+                          await reconcile();
+                        }}
+                      >
+                        {L("ยกเลิกอุปกรณ์", "Revoke")}
+                      </button>
+                    )}
+                  </p>
+                ))}
+              </>
+            )}
+          </section>
+          <section className="settings-group">
+            <h3>{L("ผู้ป่วยและผู้ดูแล", "Patient and caregivers")}</h3>
+            <button onClick={() => setProfileEdit(true)}>
+              {t.profile} / {t.allergy}
+            </button>
+            <button onClick={() => setCaregiver(true)}>{t.caregiver}</button>
+          </section>
+          <section className="settings-group">
+            <h3>{L("ความเป็นส่วนตัวและข้อมูล", "Privacy and data")}</h3>
+            <p className="muted">{t.privacy}</p>
+            <button
+              onClick={async () => {
+                const result = await navigator.storage?.persist?.();
+                setMessage(
+                  result
+                    ? L(
+                        "ขอให้เก็บข้อมูลถาวรในเครื่องแล้ว (ไม่ใช่การสำรองข้อมูล)",
+                        "Persistent storage granted (this is not a backup).",
+                      )
+                    : L(
+                        "เบราว์เซอร์ไม่อนุญาตให้เก็บข้อมูลถาวร ข้อมูลยังสำรองไว้ในบัญชี",
+                        "Persistent storage not granted; your account still keeps a copy.",
+                      ),
+                );
+              }}
+            >
+              {L("ขอเก็บข้อมูลถาวรในเครื่อง", "Request persistent storage")}
+            </button>
+            <button
+              disabled={view.role !== "owner"}
+              onClick={async () => {
+                try {
+                  const data = await api("/account/export", {});
+                  download(
+                    JSON.stringify(data, null, 2),
+                    "medication-account.json",
+                    "application/json",
+                  );
+                } catch (e: any) {
+                  setMessage(friendlyError(e, lang));
+                }
+              }}
+            >
+              {t.export}
+            </button>
+          </section>
+          <section className="settings-group">
+            <h3>{L("บัญชี", "Account")}</h3>
+            <button onClick={logout}>{t.logout}</button>
+            <button
+              className="danger"
+              disabled={view.role !== "owner"}
+              onClick={async () => {
+                if (
+                  prompt(
+                    L(
+                      "การลบบัญชีจะลบข้อมูลยาทั้งหมดและย้อนกลับไม่ได้ พิมพ์ DELETE เพื่อยืนยัน",
+                      "Deleting the account removes all medicine records and cannot be undone. Type DELETE to confirm.",
+                    ),
+                  ) !== "DELETE"
+                )
+                  return;
+                try {
+                  await api("/account", { confirm: "DELETE" }, "DELETE");
+                  await clearPrivate();
+                  if (auth) await auth.auth.signOut();
+                  sessionStorage.clear();
+                  token = "";
+                  actor = "";
+                  setSigned(false);
+                  setS(undefined);
+                  setPatient("");
+                } catch (e: any) {
+                  setMessage(friendlyError(e, lang));
+                }
+              }}
+            >
+              {t.delete}
+            </button>
+          </section>
         </Modal>
       )}
       {profileEdit && view && (
@@ -1483,6 +2150,7 @@ function App() {
             patient={patient}
             owner={view?.role === "owner"}
             api={api}
+            lang={lang}
           />
         </Modal>
       )}
@@ -1525,10 +2193,12 @@ function Photo({ photos }: { photos: any[] }) {
 function Modal({
   title,
   close,
+  closeLabel = "Close / ปิด",
   children,
 }: {
   title: string;
   close: () => void;
+  closeLabel?: string;
   children: React.ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -1545,8 +2215,8 @@ function Modal({
     <dialog ref={ref} onCancel={close}>
       <div className="heading">
         <h2>{title}</h2>
-        <button onClick={close} aria-label="Close">
-          ×
+        <button onClick={close} aria-label={closeLabel}>
+          ✕
         </button>
       </div>
       {children}
@@ -1621,7 +2291,11 @@ function MedicineForm({
     try {
       await db.drafts.put({ id: medicine.id, value: { m, r, file } });
     } catch {
-      setError("Draft storage failed. Keep original instructions.");
+      setError(
+        lang === "th"
+          ? "บันทึกแบบร่างไม่สำเร็จ กรุณาเก็บคำแนะนำเดิมไว้"
+          : "Draft storage failed. Keep original instructions.",
+      );
     }
   };
   const field = (label: string, key: string, target = "m", type = "text") => (
@@ -1639,10 +2313,19 @@ function MedicineForm({
       />
     </label>
   );
+  const L = (th: string, en: string) => (lang === "th" ? th : en);
+  const steps = [t.photo, t.name, t.amount, t.time, t.review];
+  const setSlot = (i: number, patch: any) =>
+    updateR(
+      "slots",
+      r.slots.map((x: any, j: number) => (j === i ? { ...x, ...patch } : x)),
+    );
+  const localEffective = DateTime.fromISO(r.effectiveAt || "");
   return (
     <form
       onSubmit={async (e) => {
         e.preventDefault();
+        setError("");
         if (step < 4) {
           await persist();
           setStep(step + 1);
@@ -1663,31 +2346,37 @@ function MedicineForm({
                 a.data.strength === m.strength,
             ) &&
             !confirm(
-              "Possible duplicate name/strength. Review before continuing. Save anyway?",
+              L(
+                "อาจเป็นยาซ้ำ (ชื่อและความแรงเหมือนรายการที่มีอยู่) ต้องการบันทึกหรือไม่",
+                "Possible duplicate name/strength. Review before continuing. Save anyway?",
+              ),
             )
           )
             return;
           await onSave(med, reg, file);
         } catch (e: any) {
-          setError(e.message);
+          setError(friendlyError(e, lang));
         }
       }}
     >
-      <p>
-        {step + 1} / 5 · {[t.photo, t.name, t.amount, t.time, t.review][step]}
+      <p className="step-label">
+        {L("ขั้นตอน", "Step")} {step + 1} / 5 · <strong>{steps[step]}</strong>
       </p>
+      <div className="stepper" aria-hidden>
+        {steps.map((_, i) => (
+          <span key={i} className={i <= step ? "done" : ""} />
+        ))}
+      </div>
       {step === 0 ? (
         <>
-          <label>
-            {t.photo}
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              onChange={(e) => setFile(e.target.files?.[0])}
-            />
-          </label>
-          <label>
-            Camera / กล้อง
+          <p>
+            {L(
+              "ถ่ายรูปกล่องยาหรือฉลากเพื่อช่วยจำ (ไม่บังคับ) กด “ถัดไป” เพื่อข้ามได้",
+              "Take a photo of the box or label to help recognise it (optional). Tap “Next” to skip.",
+            )}
+          </p>
+          <label className="file-button">
+            📷 {L("ถ่ายรูปด้วยกล้อง", "Take a photo")}
             <input
               type="file"
               accept="image/*"
@@ -1695,8 +2384,24 @@ function MedicineForm({
               onChange={(e) => setFile(e.target.files?.[0])}
             />
           </label>
-          <p>
-            Optional. JPEG, PNG or WebP, 8 MB maximum. HEIC: export as JPEG.
+          <label className="file-button">
+            🖼 {t.photo} ({L("เลือกจากอัลบั้ม", "choose from album")})
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={(e) => setFile(e.target.files?.[0])}
+            />
+          </label>
+          {file && (
+            <p>
+              ✓ {L("เลือกรูปแล้ว", "Photo selected")}: {file.name}
+            </p>
+          )}
+          <p className="muted">
+            {L(
+              "รองรับ JPEG, PNG หรือ WebP ไม่เกิน 8 MB",
+              "JPEG, PNG or WebP, 8 MB maximum. HEIC: export as JPEG.",
+            )}
           </p>
         </>
       ) : step === 1 ? (
@@ -1712,47 +2417,62 @@ function MedicineForm({
           )}
           {field(t.strength, "strength")}
           <label>
-            Form
+            {t.form}
             <select
               value={m.form}
               onChange={(e) => updateM("form", e.target.value)}
             >
-              {[
-                "tablet",
-                "capsule",
-                "liquid",
-                "drops",
-                "injection",
-                "inhaler",
-                "topical",
-                "other",
-              ].map((x) => (
-                <option key={x}>{x}</option>
+              {Object.keys(formNames.en).map((x) => (
+                <option key={x} value={x}>
+                  {formNames[lang][x]}
+                </option>
               ))}
             </select>
           </label>
           <label>
-            Product type
+            {t.productType}
             <select
               value={m.productType}
               onChange={(e) => updateM("productType", e.target.value)}
             >
-              {["prescription", "nonprescription", "supplement"].map((x) => (
-                <option key={x}>{x}</option>
+              {Object.keys(productNames.en).map((x) => (
+                <option key={x} value={x}>
+                  {productNames[lang][x]}
+                </option>
               ))}
             </select>
           </label>
-          {field(t.purpose, "purpose")}
-          {field(t.source, "source")}
+          {field(t.purpose + L(" (ไม่บังคับ)", " (optional)"), "purpose")}
+          {field(t.source + L(" (ไม่บังคับ)", " (optional)"), "source")}
         </>
       ) : step === 2 ? (
         <>
           {field(t.route, "route")}
+          <p className="hint">
+            {L(
+              "เช่น รับประทาน, หยอดตา, ทาผิว",
+              "e.g. by mouth, eye drops, on skin",
+            )}
+          </p>
           {field(t.instructions, "instructions", "r")}
+          <p className="hint">
+            {L(
+              "คัดลอกข้อความจากฉลากหรือใบสั่งยา เช่น “รับประทานครั้งละ 1 เม็ด วันละ 2 ครั้ง”",
+              "Copy the words from the label or prescription.",
+            )}
+          </p>
           {field(t.food, "food", "r")}
-          <p>
-            Copy original instructions. The app does not convert concentrations
-            or assess splitting suitability.
+          <p className="hint">
+            {L(
+              "เช่น หลังอาหาร, ก่อนอาหาร 30 นาที",
+              "e.g. after meals, 30 minutes before food",
+            )}
+          </p>
+          <p className="muted">
+            {L(
+              "แอปไม่คำนวณหรือแปลงขนาดยาให้ ใส่ตามที่ได้รับคำแนะนำ",
+              "Copy original instructions. The app does not convert concentrations or assess splitting suitability.",
+            )}
           </p>
         </>
       ) : step === 3 ? (
@@ -1764,9 +2484,9 @@ function MedicineForm({
               onChange={(e) => updateR("status", e.target.value)}
             >
               {[
-                "draft",
                 "active",
                 "as-needed",
+                "draft",
                 "reference",
                 "paused",
                 "stopped",
@@ -1777,70 +2497,81 @@ function MedicineForm({
               ))}
             </select>
           </label>
-          {field(t.start, "start", "r", "date")}
-          {field(t.end, "end", "r", "date")}
-          {field(t.timezone, "timezone", "r")}
-          <label>
-            {t.effective}
-            <select
-              value={r.effectiveMode || "at-time"}
-              onChange={(e) => updateR("effectiveMode", e.target.value)}
-            >
-              <option value="on-commit">
-                When the server confirms / เมื่อเซิร์ฟเวอร์ยืนยัน
-              </option>
-              <option value="at-time">
-                Selected date and time / วันที่และเวลาที่เลือก
-              </option>
-            </select>
-          </label>
-          {r.effectiveMode !== "on-commit" &&
-            field(t.effective + " (ISO, UTC or offset)", "effectiveAt", "r")}
+          <p className="hint">{t.statusHelp}</p>
           {r.slots.map((s: any, i: number) => (
-            <fieldset key={s.id}>
-              <legend>Slot {i + 1}</legend>
-              {[
-                ["time", t.time, "time"],
-                ["amount", t.amount, "text"],
-                ["unit", t.unit, "text"],
-              ].map(([key, label, type]) => (
-                <label key={key}>
-                  {label}
-                  <input
-                    type={type}
-                    value={s[key]}
-                    onChange={(e) =>
-                      updateR(
-                        "slots",
-                        r.slots.map((x: any, j: number) =>
-                          j === i ? { ...x, [key]: e.target.value } : x,
-                        ),
-                      )
-                    }
-                  />
-                </label>
-              ))}
+            <fieldset key={s.id} className="slot">
+              <legend>
+                {t.timeSlot} {i + 1}
+              </legend>
               <label>
-                Weekdays (1 Monday — 7 Sunday)
+                {t.time}
                 <input
-                  value={s.weekdays.join(",")}
-                  onChange={(e) =>
-                    updateR(
-                      "slots",
-                      r.slots.map((x: any, j: number) =>
-                        j === i
-                          ? {
-                              ...x,
-                              weekdays: e.target.value.split(",").map(Number),
-                            }
-                          : x,
-                      ),
-                    )
-                  }
+                  type="time"
+                  value={s.time}
+                  onChange={(e) => setSlot(i, { time: e.target.value })}
+                  onBlur={persist}
                 />
               </label>
+              <div className="pair">
+                <label>
+                  {t.amount}
+                  <input
+                    inputMode="decimal"
+                    placeholder={L("เช่น 1 หรือ 0.5", "e.g. 1 or 0.5")}
+                    value={s.amount}
+                    onChange={(e) =>
+                      setSlot(i, { amount: e.target.value.trim() })
+                    }
+                    onBlur={persist}
+                  />
+                </label>
+                <label>
+                  {t.unit}
+                  <input
+                    list="dose-units"
+                    placeholder={L("เช่น เม็ด", "e.g. tablet")}
+                    value={s.unit}
+                    onChange={(e) => setSlot(i, { unit: e.target.value })}
+                    onBlur={persist}
+                  />
+                </label>
+              </div>
+              <div role="group" aria-label={t.weekdays} className="weekdays">
+                <span>{t.weekdays}</span>
+                {weekdayNames[lang].map((name, d) => {
+                  const on = s.weekdays.includes(d + 1);
+                  return (
+                    <button
+                      type="button"
+                      key={d}
+                      aria-pressed={on}
+                      className={on ? "day on" : "day"}
+                      onClick={() =>
+                        setSlot(i, {
+                          weekdays: on
+                            ? s.weekdays.filter((x: number) => x !== d + 1)
+                            : [...s.weekdays, d + 1].sort((a, b) => a - b),
+                        })
+                      }
+                    >
+                      {name}
+                    </button>
+                  );
+                })}
+                {s.weekdays.length < 7 && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSlot(i, { weekdays: [1, 2, 3, 4, 5, 6, 7] })
+                    }
+                  >
+                    {t.everyDay}
+                  </button>
+                )}
+              </div>
               <button
                 type="button"
+                className="link-button"
                 onClick={() =>
                   updateR(
                     "slots",
@@ -1848,12 +2579,39 @@ function MedicineForm({
                   )
                 }
               >
-                Remove slot
+                {t.removeTime}
               </button>
             </fieldset>
           ))}
+          <datalist id="dose-units">
+            {(lang === "th"
+              ? [
+                  "เม็ด",
+                  "แคปซูล",
+                  "มล.",
+                  "ช้อนชา",
+                  "หยด",
+                  "พ่น",
+                  "ยูนิต",
+                  "ซอง",
+                ]
+              : [
+                  "tablet",
+                  "capsule",
+                  "mL",
+                  "teaspoon",
+                  "drop",
+                  "puff",
+                  "unit",
+                  "sachet",
+                ]
+            ).map((u) => (
+              <option key={u} value={u} />
+            ))}
+          </datalist>
           <button
             type="button"
+            className="add-slot"
             onClick={() =>
               updateR("slots", [
                 ...r.slots,
@@ -1867,57 +2625,143 @@ function MedicineForm({
               ])
             }
           >
-            Add exact time / เพิ่มเวลา
+            ＋ {t.addTime}
           </button>
           {r.status === "as-needed" && (
             <>
               {field(
-                "Clinician indication (if supplied)",
+                L(
+                  "ใช้เมื่อมีอาการ (ถ้าแพทย์ระบุ)",
+                  "Clinician indication (if supplied)",
+                ),
                 "prnIndication",
                 "r",
               )}
-              {field("Interval (if supplied)", "prnInterval", "r")}
-              {field("Maximum (if supplied)", "prnMaximum", "r")}
-              <p>No routine reminders; no safety calculations.</p>
+              {field(
+                L("ห่างกันอย่างน้อย (ถ้าระบุ)", "Interval (if supplied)"),
+                "prnInterval",
+                "r",
+              )}
+              {field(
+                L("สูงสุดต่อวัน (ถ้าระบุ)", "Maximum (if supplied)"),
+                "prnMaximum",
+                "r",
+              )}
+              <p className="muted">
+                {L(
+                  "ยาที่ใช้เมื่อจำเป็นจะไม่มีการแจ้งเตือนตามเวลา และแอปไม่คำนวณความปลอดภัย",
+                  "No routine reminders; no safety calculations.",
+                )}
+              </p>
             </>
           )}
+          <details className="advanced">
+            <summary>{L("ตั้งค่าเพิ่มเติม", "More options")}</summary>
+            {field(t.start, "start", "r", "date")}
+            {field(
+              t.end + L(" (ไม่บังคับ)", " (optional)"),
+              "end",
+              "r",
+              "date",
+            )}
+            {field(t.timezone, "timezone", "r")}
+            <label>
+              {t.effective}
+              <select
+                value={r.effectiveMode || "at-time"}
+                onChange={(e) => updateR("effectiveMode", e.target.value)}
+              >
+                <option value="on-commit">
+                  {L("ทันทีเมื่อเซิร์ฟเวอร์ยืนยัน", "When the server confirms")}
+                </option>
+                <option value="at-time">
+                  {L("วันที่และเวลาที่เลือก", "Selected date and time")}
+                </option>
+              </select>
+            </label>
+            {r.effectiveMode !== "on-commit" && (
+              <label>
+                {t.effective} ({L("เวลาของโทรศัพท์", "phone time")})
+                <input
+                  type="datetime-local"
+                  value={
+                    localEffective.isValid
+                      ? localEffective.toLocal().toFormat("yyyy-MM-dd'T'HH:mm")
+                      : ""
+                  }
+                  onChange={(e) => {
+                    const d = new Date(e.target.value);
+                    if (!isNaN(d.getTime()))
+                      updateR("effectiveAt", d.toISOString());
+                  }}
+                />
+              </label>
+            )}
+          </details>
         </>
       ) : (
         <>
           <h3>
-            {m.name} · {m.strength}
+            {m.name || "—"}
+            {m.strength ? " · " + m.strength : ""}
           </h3>
-          {medicine.data && (
-            <p>
-              Before: {regimen?.instructions} ·{" "}
-              {regimen?.slots
+          {medicine.data && regimen && (
+            <p className="muted">
+              {L("ก่อนแก้ไข", "Before")}: {regimen.instructions} ·{" "}
+              {regimen.slots
                 .map((s: any) => s.time + " " + s.amount + " " + s.unit)
                 .join(", ")}
             </p>
           )}
-          <p>
-            {r.instructions} · {m.route} · {r.food}
-          </p>
-          <p>
-            {r.slots
-              .map(
-                (s: any) =>
-                  `${s.time}: ${s.amount} ${s.unit} (${s.weekdays.join(",")})`,
-              )
-              .join(" / ")}
-          </p>
-          <p>
-            {r.start} — {r.end || "—"} · {r.timezone} · {r.status}
-          </p>
-          <p>
-            {t.effective}:{" "}
-            {r.effectiveMode === "on-commit"
-              ? "When the server confirms / เมื่อเซิร์ฟเวอร์ยืนยัน"
-              : r.effectiveAt}
-          </p>
+          <dl className="review">
+            <dt>{t.instructions}</dt>
+            <dd>{r.instructions || "—"}</dd>
+            <dt>{t.route}</dt>
+            <dd>{r.route || m.route || "—"}</dd>
+            <dt>{t.food}</dt>
+            <dd>{r.food || "—"}</dd>
+            <dt>{t.time}</dt>
+            <dd>
+              {r.slots.length
+                ? r.slots.map((s: any) => (
+                    <div key={s.id}>
+                      🕒 {s.time || "—"} · {s.amount || "—"} {s.unit} ·{" "}
+                      {weekdaysText(s.weekdays, lang)}
+                    </div>
+                  ))
+                : "—"}
+            </dd>
+            <dt>{t.status}</dt>
+            <dd>{(t as any)[r.status] || r.status}</dd>
+            <dt>{L("ช่วงเวลา", "Dates")}</dt>
+            <dd>
+              {day(r.start, lang)} — {r.end ? day(r.end, lang) : "…"}
+            </dd>
+          </dl>
+          {r.status === "draft" && r.slots.length > 0 && (
+            <div className="warning">
+              <p>
+                {L(
+                  "ยานี้ยังเป็น “แบบร่าง” จึงจะไม่มีการแจ้งเตือนตามเวลา",
+                  "This medicine is still a “Draft”, so there will be no reminders.",
+                )}
+              </p>
+              <button type="button" onClick={() => updateR("status", "active")}>
+                🔔{" "}
+                {L(
+                  "ตั้งเป็น “ใช้อยู่” เพื่อรับการแจ้งเตือน",
+                  "Set to “Active” to get reminders",
+                )}
+              </button>
+            </div>
+          )}
           {field(t.source, "source", "r")}
-          {field("Reason for change", "reason", "r")}
-          <label>
+          {field(
+            L("เหตุผลที่เปลี่ยน (ถ้ามี)", "Reason for change"),
+            "reason",
+            "r",
+          )}
+          <label className="check confirm-box">
             <input
               type="checkbox"
               checked={r.confirmed}
@@ -1925,7 +2769,12 @@ function MedicineForm({
             />
             {t.confirm}
           </label>
-          <p>This is patient confirmation, not professional verification.</p>
+          <p className="muted">
+            {L(
+              "เป็นการยืนยันของผู้ป่วย ไม่ใช่การตรวจสอบโดยผู้เชี่ยวชาญ",
+              "This is patient confirmation, not professional verification.",
+            )}
+          </p>
         </>
       )}
       {error && (
@@ -1933,22 +2782,25 @@ function MedicineForm({
           {error}
         </p>
       )}
-      <div className="actions">
+      <div className="actions form-nav">
         {step > 0 && (
           <button type="button" onClick={() => setStep(step - 1)}>
-            ← Back
+            ← {t.back}
           </button>
         )}
         <button className="primary">{step === 4 ? t.save : t.next}</button>
       </div>
       <button
         type="button"
+        className="link-button"
         onClick={async () => {
           await persist();
-          setError("Draft saved on this phone");
+          setError(
+            L("บันทึกแบบร่างในโทรศัพท์นี้แล้ว", "Draft saved on this phone"),
+          );
         }}
       >
-        {t.draft}
+        {L("บันทึกแบบร่างไว้ก่อน", "Save draft for later")}
       </button>
     </form>
   );
@@ -1957,13 +2809,22 @@ function Caregivers({
   patient,
   owner,
   api,
+  lang,
 }: {
   patient: string;
   owner: boolean;
   api: typeof window.fetch | any;
+  lang: Language;
 }) {
   const [list, setList] = useState<any[]>([]),
     [message, setMessage] = useState("");
+  const L = (th: string, en: string) => (lang === "th" ? th : en);
+  const roleName = (role: string) =>
+    role === "owner"
+      ? L("เจ้าของ", "Owner")
+      : role === "editor"
+        ? L("ช่วยแก้ไขและบันทึกยาได้", "Editor (can record and edit)")
+        : L("ดูได้อย่างเดียว", "Viewer (read only)");
   const load = () =>
     api("/patients/" + patient + "/memberships")
       .then(setList)
@@ -1974,9 +2835,10 @@ function Caregivers({
   return (
     <>
       <p>
-        Invited caregivers use their own account. Editing access does not enable
-        reminders. Previously downloaded information cannot be recalled from
-        offline devices.
+        {L(
+          "ผู้ดูแลใช้บัญชีอีเมลของตนเอง สิทธิ์แก้ไขไม่ได้เปิดการแจ้งเตือนให้อัตโนมัติ ข้อมูลที่ดาวน์โหลดไปแล้วในเครื่องที่ออฟไลน์เรียกคืนไม่ได้",
+          "Invited caregivers use their own account. Editing access does not enable reminders. Previously downloaded information cannot be recalled from offline devices.",
+        )}
       </p>
       {owner && (
         <form
@@ -1989,25 +2851,31 @@ function Caregivers({
                 role: f.get("role"),
               });
               setMessage(
-                "Share this single-use token privately (48 hours): " + r.token,
+                L(
+                  "ส่งรหัสเชิญนี้ให้ผู้ดูแลแบบส่วนตัว (ใช้ได้ครั้งเดียว ภายใน 48 ชั่วโมง): ",
+                  "Share this single-use token privately (48 hours): ",
+                ) + r.token,
               );
             } catch (e: any) {
               setMessage(e.message);
             }
           }}
         >
+          <h3>{L("เชิญผู้ดูแล", "Invite a caregiver")}</h3>
           <label>
-            Email
+            {L("อีเมลผู้ดูแล", "Caregiver email")}
             <input type="email" name="email" required />
           </label>
           <label>
-            Role
+            {L("สิทธิ์", "Access")}
             <select name="role">
-              <option>viewer</option>
-              <option>editor</option>
+              <option value="viewer">{roleName("viewer")}</option>
+              <option value="editor">{roleName("editor")}</option>
             </select>
           </label>
-          <button>Create invitation</button>
+          <button className="primary">
+            {L("สร้างรหัสเชิญ", "Create invitation")}
+          </button>
         </form>
       )}
       <form
@@ -2019,55 +2887,79 @@ function Caregivers({
               token: f.get("token"),
               agreed: f.get("agreed") === "on",
             });
-            setMessage("Accepted. Reopen app to select patient.");
+            setMessage(
+              L(
+                "ยอมรับแล้ว ปิดแล้วเปิดแอปใหม่เพื่อเลือกผู้ป่วย",
+                "Accepted. Reopen app to select patient.",
+              ),
+            );
           } catch (e: any) {
             setMessage(e.message);
           }
         }}
       >
+        <h3>{L("ได้รับรหัสเชิญ?", "Received an invitation?")}</h3>
         <label>
-          Invitation token
-          <input name="token" required />
+          {L("รหัสเชิญ", "Invitation token")}
+          <input name="token" required autoComplete="off" />
         </label>
-        <label>
-          <input type="checkbox" name="agreed" required />I agree to access this
-          profile
-        </label>
-        <button>Accept invitation</button>
-      </form>
-      {list.map((m) => (
-        <p key={m.user_id}>
-          {m.user_id} · {m.role}{" "}
-          {m.role !== "owner" && (
-            <>
-              <button
-                onClick={async () => {
-                  await api(
-                    "/patients/" + patient + "/memberships/" + m.user_id,
-                    { role: m.role === "viewer" ? "editor" : "viewer" },
-                    "PATCH",
-                  );
-                  load();
-                }}
-              >
-                Change role
-              </button>
-              <button
-                onClick={async () => {
-                  await api(
-                    "/patients/" + patient + "/memberships/" + m.user_id,
-                    undefined,
-                    "DELETE",
-                  );
-                  load();
-                }}
-              >
-                Revoke
-              </button>
-            </>
+        <label className="check">
+          <input type="checkbox" name="agreed" required />
+          {L(
+            "ฉันยินยอมเข้าถึงข้อมูลของผู้ป่วยนี้",
+            "I agree to access this profile",
           )}
-        </p>
-      ))}
+        </label>
+        <button>{L("ยอมรับคำเชิญ", "Accept invitation")}</button>
+      </form>
+      {list.some((m) => !m.revoked_at) && (
+        <h3>{L("ผู้มีสิทธิ์เข้าถึง", "People with access")}</h3>
+      )}
+      {list
+        .filter((m) => !m.revoked_at)
+        .map((m, i) => (
+          <p key={m.user_id} className="device-row">
+            {m.role === "owner" ? "" : L("ผู้ดูแล ", "Caregiver ") + i + " · "}
+            {roleName(m.role)}{" "}
+            {m.role !== "owner" && (
+              <>
+                <button
+                  onClick={async () => {
+                    await api(
+                      "/patients/" + patient + "/memberships/" + m.user_id,
+                      { role: m.role === "viewer" ? "editor" : "viewer" },
+                      "PATCH",
+                    );
+                    load();
+                  }}
+                >
+                  {L("เปลี่ยนสิทธิ์", "Change access")}
+                </button>
+                <button
+                  onClick={async () => {
+                    if (
+                      !confirm(
+                        L(
+                          "ยกเลิกสิทธิ์ของผู้ดูแลนี้?",
+                          "Revoke this caregiver?",
+                        ),
+                      )
+                    )
+                      return;
+                    await api(
+                      "/patients/" + patient + "/memberships/" + m.user_id,
+                      undefined,
+                      "DELETE",
+                    );
+                    load();
+                  }}
+                >
+                  {L("ยกเลิกสิทธิ์", "Revoke")}
+                </button>
+              </>
+            )}
+          </p>
+        ))}
       <p role="status" style={{ overflowWrap: "anywhere" }}>
         {message}
       </p>
@@ -2108,7 +3000,7 @@ function ProfileForm({
           });
           await onSave(data);
         } catch (e: any) {
-          setError(e.message);
+          setError(friendlyError(e, t === words.th ? "th" : "en"));
         }
       }}
     >

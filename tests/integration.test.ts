@@ -126,6 +126,8 @@ describe("PostgreSQL authorization and transactions", () => {
         o.intended_at > new Date(Date.now() - 900000),
     );
     expect(occurrence).toBeTruthy();
+    // The Today screen compares this calendar day with a "YYYY-MM-DD" string.
+    expect(occurrence.local_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     await expect(
       pool.query(
         "UPDATE regimen_versions SET data=data WHERE medication_id=$1",

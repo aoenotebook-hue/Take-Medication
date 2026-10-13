@@ -3,6 +3,10 @@ import pg from "pg";
 import { rootCertificates } from "node:tls";
 import { attachDatabasePool } from "@vercel/functions";
 import { SUPABASE_ROOT_CA } from "./supabase-ca.js";
+// DATE columns (e.g. dose_occurrences.local_date) are calendar days in the
+// schedule's timezone. pg's default turns them into Date objects at server-local
+// midnight, which serialize as timestamps and never equal "YYYY-MM-DD" in the app.
+pg.types.setTypeParser(pg.types.builtins.DATE, (value) => value);
 const connectionString =
   process.env.DATABASE_URL ||
   "postgres://medication:local-only@localhost:5432/medication";
@@ -21,7 +25,9 @@ export const pool = new pg.Pool({
           ca: [
             ...rootCertificates,
             SUPABASE_ROOT_CA,
-            ...(process.env.DATABASE_SSL_CA ? [process.env.DATABASE_SSL_CA] : []),
+            ...(process.env.DATABASE_SSL_CA
+              ? [process.env.DATABASE_SSL_CA]
+              : []),
           ],
         }
       : undefined,
