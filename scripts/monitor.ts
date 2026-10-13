@@ -29,15 +29,18 @@ console.log(
     2,
   ),
 );
+// Supabase Cron runs the worker once a minute, so a 60-second limit raised
+// false alarms on normal jitter. Default 180 s; override per hosting mode.
+const staleSeconds = Number(process.env.WORKER_STALE_SECONDS || 180);
 const worker = health.find((h) => h.id === "worker"),
   scheduler = health.find((h) => h.id === "scheduler");
 if (
   !worker ||
-  worker.age > 60 ||
+  worker.age > staleSeconds ||
   !scheduler ||
   !scheduler.horizon_at ||
   new Date(scheduler.horizon_at) < new Date(Date.now() + 86400000) ||
-  lag > 60 ||
+  lag > staleSeconds ||
   scheduleIssues > 0
 )
   process.exitCode = 1;

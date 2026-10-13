@@ -409,6 +409,9 @@ app.post("/api/push-subscriptions", async (req, res) => {
       patientId: z.string().uuid(),
       label: z.string().min(1).max(100),
       consent: z.literal(true),
+      // True only for the user's own "Enable reminders" tap. Background
+      // reconciliation must never undo a remote device revocation.
+      explicit: z.boolean().optional(),
       subscription: z.object({
         endpoint: z.string().url(),
         keys: z.object({
@@ -429,6 +432,18 @@ app.post("/api/push-subscriptions", async (req, res) => {
     ).rows[0];
     if (device && device.user_id !== res.locals.user.id)
       throw new HttpError(403, "Device belongs to another account");
+    if (device?.revoked_at && !d.explicit)
+      throw new HttpError(409, "Device revoked");
+    if (
+      !d.explicit &&
+      (
+        await c.query(
+          "SELECT 1 FROM reminder_preferences WHERE patient_id=$1 AND device_id=$2 AND NOT enabled",
+          [d.patientId, d.deviceId],
+        )
+      ).rowCount
+    )
+      throw new HttpError(409, "Reminders turned off on this device");
     const hash = createHash("sha256")
       .update(d.subscription.endpoint)
       .digest("hex");
@@ -459,6 +474,29 @@ app.post("/api/push-subscriptions", async (req, res) => {
   });
   res.json({ registered: true });
 });
+// Turn reminders for one patient off (or back on) on one of the user's devices.
+app.post("/api/reminder-preferences", async (req, res) => {
+  const d = z
+    .object({
+      deviceId: z.string().uuid(),
+      patientId: z.string().uuid(),
+      enabled: z.literal(false),
+    })
+    .parse(req.body);
+  await transaction(async (c) => {
+    await authorize(c, res.locals.user.id, d.patientId);
+    const r = await c.query(
+      "UPDATE reminder_preferences p SET enabled=false FROM devices v WHERE p.device_id=v.id AND v.user_id=$3 AND p.patient_id=$1 AND p.device_id=$2 RETURNING p.device_id",
+      [d.patientId, d.deviceId, res.locals.user.id],
+    );
+    if (!r.rowCount) throw new HttpError(404, "Device not found");
+    await c.query(
+      "UPDATE reminder_jobs SET state='cancelled' WHERE patient_id=$1 AND state IN ('queued','leased') AND subscription_id IN (SELECT id FROM push_subscriptions WHERE device_id=$2)",
+      [d.patientId, d.deviceId],
+    );
+  });
+  res.json({ enabled: false });
+});
 app.delete("/api/devices/:id", async (req, res) => {
   await transaction(async (c) => {
     const r = await c.query(
@@ -477,6 +515,7 @@ app.get("/api/push/config", (_req, res) =>
   res.json({
     publicKey: process.env.VAPID_PUBLIC_KEY || null,
     adapter: process.env.PUSH_ADAPTER || "webpush",
+    freshnessSeconds: Number(process.env.REMINDER_FRESHNESS_SECONDS || 900),
   }),
 );
 app.post(
@@ -870,11 +909,13 @@ app.delete("/api/account", async (req, res) => {
     ]);
     // Frees the phone number for a new registration.
     await c.query("DELETE FROM pin_credentials WHERE user_id=$1", [actor]);
+    // Same transaction: a crash cannot leave tombstones without a durable
+    // provider-cleanup request.
+    await c.query(
+      "INSERT INTO account_deletions(user_id) VALUES($1) ON CONFLICT DO NOTHING",
+      [actor],
+    );
   });
-  await pool.query(
-    "INSERT INTO account_deletions(user_id) VALUES($1) ON CONFLICT DO NOTHING",
-    [actor],
-  );
   let identityCleanup = "pending";
   if (demoEnabled()) identityCleanup = "synthetic-local-account";
   else {

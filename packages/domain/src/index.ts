@@ -17,7 +17,10 @@ export const slotSchema = z.object({
   id: z.string().min(1),
   time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
   amount: quantity,
-  unit: z.string().min(1),
+  unit: z
+    .string()
+    .max(50)
+    .refine((v) => v.trim().length > 0, "Required"),
   weekdays: z.array(z.number().int().min(1).max(7)).min(1).max(7),
 });
 export const regimenSchema = z
@@ -96,7 +99,10 @@ export const regimenSchema = z
     }
   });
 export const medicationSchema = z.object({
-  name: z.string().min(1).max(200),
+  name: z
+    .string()
+    .max(200)
+    .refine((v) => v.trim().length > 0, "Required"),
   generic: z.string().max(200),
   brand: z.string().max(200),
   strength: z.string().max(500),

@@ -371,3 +371,66 @@ it("removing a medicine and clearing all data are owner-scoped and complete", as
     ]);
   });
 });
+it("a remotely revoked or turned-off device stays off until the user re-enables it", async () => {
+  const deviceId = randomUUID();
+  const body = (extra: any = {}) => ({
+    deviceId,
+    patientId: patient,
+    label: "Synthetic phone",
+    consent: true,
+    subscription: {
+      endpoint: "https://fcm.googleapis.com/fcm/send/revoke-" + deviceId,
+      keys: { p256dh: "a".repeat(88), auth: "a".repeat(22) },
+    },
+    ...extra,
+  });
+  expect(
+    (await request("/push-subscriptions", "POST", body({ explicit: true })))
+      .status,
+  ).toBe(200);
+  expect((await request("/devices/" + deviceId, "DELETE")).status).toBe(200);
+  // Background reconciliation (no explicit flag) must not undo the revocation.
+  expect((await request("/push-subscriptions", "POST", body())).status).toBe(
+    409,
+  );
+  const revoked = await pool.query(
+    "SELECT revoked_at FROM devices WHERE id=$1",
+    [deviceId],
+  );
+  expect(revoked.rows[0].revoked_at).not.toBeNull();
+  // The user's own Enable tap restores it.
+  expect(
+    (await request("/push-subscriptions", "POST", body({ explicit: true })))
+      .status,
+  ).toBe(200);
+  // Turning reminders off for this patient also survives reconciliation.
+  expect(
+    (
+      await request("/reminder-preferences", "POST", {
+        deviceId,
+        patientId: patient,
+        enabled: false,
+      })
+    ).status,
+  ).toBe(200);
+  expect((await request("/push-subscriptions", "POST", body())).status).toBe(
+    409,
+  );
+  // Another account's device id cannot be turned off.
+  expect(
+    (
+      await request("/reminder-preferences", "POST", {
+        deviceId: randomUUID(),
+        patientId: patient,
+        enabled: false,
+      })
+    ).status,
+  ).toBe(404);
+  await pool.query("DELETE FROM reminder_preferences WHERE device_id=$1", [
+    deviceId,
+  ]);
+  await pool.query("DELETE FROM push_subscriptions WHERE device_id=$1", [
+    deviceId,
+  ]);
+  await pool.query("DELETE FROM devices WHERE id=$1", [deviceId]);
+});

@@ -280,3 +280,28 @@ test("row edit and delete buttons, daily schedule view, and clear all data", asy
     page.getByText("ผู้ป่วยตัวอย่าง / Demo patient").first(),
   ).toBeVisible();
 });
+test("an unfinished new medicine can be found and continued", async ({
+  page,
+}) => {
+  page.on("dialog", (d) => d.accept());
+  const name = "Synthetic draft " + Date.now();
+  await page.goto("/");
+  await page.getByRole("button", { name: "ทดลองด้วยข้อมูลสมมติ" }).click();
+  await page.getByRole("button", { name: "ยาของฉัน", exact: true }).click();
+  await page.getByRole("button", { name: "เพิ่มยา" }).click();
+  const form = page.getByRole("dialog");
+  await form.getByLabel("ชื่อยา", { exact: true }).fill(name);
+  await form.getByRole("button", { name: "เช้า", exact: true }).click();
+  await page.waitForTimeout(1200); // autosave
+  await page.getByRole("button", { name: "ปิด", exact: true }).click();
+  const draft = page.locator(".draft-row", { hasText: name });
+  await expect(draft).toBeVisible();
+  await draft.getByRole("button", { name: /ทำต่อ/ }).first().click();
+  await expect(form.getByLabel("ชื่อยา", { exact: true })).toHaveValue(name);
+  await expect(
+    form.getByRole("button", { name: "เช้า", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "ปิด", exact: true }).click();
+  await draft.getByRole("button", { name: /ทิ้ง/ }).click();
+  await expect(draft).toHaveCount(0);
+});
