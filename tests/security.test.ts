@@ -229,7 +229,7 @@ it("failed migration transaction rolls back completely", async () => {
     (await pool.query("SELECT to_regclass($1) table", [table])).rows[0].table,
   ).toBeNull();
 });
-it("removing medicines is patient-scoped, hides them and blocks later edits", async () => {
+it("removing a medicine and clearing all data are owner-scoped and complete", async () => {
   const deviceId = randomUUID();
   const op = (
     kind: string,
@@ -319,18 +319,55 @@ it("removing medicines is patient-scoped, hides them and blocks later edits", as
   expect((await late.json()).results[0].error).toBe(
     "Medicine no longer exists",
   );
-  // Reset needs the explicit confirmation word, then removes the rest.
+  // Clear all data needs the explicit confirmation word.
   expect(
-    (await request("/patients/" + patient + "/reset", "POST", {})).status,
+    (await request("/patients/" + patient + "/clear", "POST", {})).status,
   ).toBe(422);
-  const reset = await request("/patients/" + patient + "/reset", "POST", {
-    confirm: "RESET",
+  await pool.query(
+    'UPDATE patients SET data=data||\'{"allergyStatus":"known","allergies":[{"substance":"Synthetic","reaction":"rash","source":"test"}]}\'::jsonb WHERE id=$1',
+    [patient],
+  );
+  const cleared = await request("/patients/" + patient + "/clear", "POST", {
+    confirm: "CLEAR",
   });
-  expect(reset.status).toBe(200);
-  expect((await reset.json()).removed).toBeGreaterThanOrEqual(1);
+  expect(cleared.status).toBe(200);
+  const { id: fresh, purged } = await cleared.json();
+  expect(purged).toBe(true);
+  expect(fresh).not.toBe(patient);
   const after = await (
-    await request("/patients/" + patient + "/snapshot")
+    await request("/patients/" + fresh + "/snapshot")
   ).json();
   expect(after.medications).toEqual([]);
-  expect(after.profile.id).toBe(patient);
+  expect(after.events).toEqual([]);
+  expect(after.profile.data.allergyStatus).toBe("unknown");
+  expect(after.profile.data.allergies).toEqual([]);
+  expect(after.profile.data.displayName).toBe("ผู้ป่วยตัวอย่าง / Demo patient");
+  // Old records are gone from the database and the old profile is refused.
+  for (const table of ["medications", "dose_occurrences", "memberships"])
+    expect(
+      (
+        await pool.query("SELECT 1 FROM " + table + " WHERE patient_id=$1", [
+          patient,
+        ])
+      ).rowCount,
+    ).toBe(0);
+  expect((await request("/patients/" + patient + "/snapshot")).status).toBe(
+    403,
+  );
+  // Restore the fixed synthetic demo profile for other tests.
+  await transaction(async (c) => {
+    await c.query("DELETE FROM change_feed WHERE patient_id=$1", [fresh]);
+    await c.query("DELETE FROM audit_events WHERE patient_id=$1", [fresh]);
+    await c.query("DELETE FROM memberships WHERE patient_id=$1", [fresh]);
+    await c.query("DELETE FROM patients WHERE id=$1", [fresh]);
+    await c.query("INSERT INTO patients(id,owner_id,data) VALUES($1,$2,$3)", [
+      patient,
+      "11111111-1111-4111-a111-111111111111",
+      after.profile.data,
+    ]);
+    await c.query("INSERT INTO memberships VALUES($1,$2,'owner',NULL)", [
+      patient,
+      "11111111-1111-4111-a111-111111111111",
+    ]);
+  });
 });

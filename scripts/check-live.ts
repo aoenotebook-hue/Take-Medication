@@ -67,18 +67,43 @@ try {
   const health = await call("/health");
   assert.equal(health.status, 200, "Database health failed");
   assert.equal((await health.json()).adapter, "webpush");
-  const created = await admin.auth.admin.createUser({
+  // A direct Supabase account (not phone + PIN) must not reach the API.
+  const directUser = await admin.auth.admin.createUser({
     email,
     password,
     email_confirm: true,
   });
-  if (created.error || !created.data.user)
+  if (directUser.error || !directUser.data.user)
     throw new Error("Synthetic auth identity creation failed");
-  userId = created.data.user.id;
-  const signed = await browser.auth.signInWithPassword({ email, password });
-  if (signed.error || !signed.data.session)
+  const directSession = await browser.auth.signInWithPassword({
+    email,
+    password,
+  });
+  if (directSession.error || !directSession.data.session)
     throw new Error("Managed sign-in failed");
-  token = signed.data.session.access_token;
+  token = directSession.data.session.access_token;
+  assert.equal(
+    (await call("/patients")).status,
+    401,
+    "Non-PIN account reached the API",
+  );
+  await admin.auth.admin.deleteUser(directUser.data.user.id);
+  token = "";
+  // Real sign-in path: synthetic, unassigned-looking phone number + PIN.
+  const phone = "+66" + "9" + String(Date.now()).slice(-8);
+  const registered = await call("/auth/pin/register", {
+    phone,
+    pin: "2580",
+  });
+  assert.equal(registered.status, 200, "Phone + PIN registration failed");
+  const session = await registered.json();
+  userId = session.user_id;
+  token = session.access_token;
+  assert.equal(
+    (await call("/auth/pin/login", { phone, pin: "1111" })).status,
+    401,
+    "Wrong PIN accepted",
+  );
   const createdProfile = await call("/patients", {
     displayName: "Synthetic deployment check",
     language: "en",

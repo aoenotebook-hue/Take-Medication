@@ -657,6 +657,45 @@ function App() {
         .then(() => localStorage.removeItem("pending-revocation"))
         .catch(() => {});
   }, [signed, reachable]);
+  async function removeMedicine(m: any) {
+    if (
+      !confirm(
+        L(
+          "ลบ “" +
+            m.data.name +
+            "” ออกจากรายการ? (ถ้าแพทย์สั่งหยุดยา ให้เปิดข้อมูลยาแล้วกด “หยุดใช้ยา” แทน เพื่อเก็บประวัติให้แพทย์ดู)",
+          "Delete “" +
+            m.data.name +
+            "”? (If the doctor stopped it, open it and use Stop instead so the doctor can see it.)",
+        ),
+      )
+    )
+      return false;
+    try {
+      await api(
+        "/patients/" + patient + "/medications/" + m.id,
+        undefined,
+        "DELETE",
+      );
+      // Drop queued edits for the removed medicine.
+      await db.outbox
+        .filter((o) => o.resourceId === m.id || o.data?.medicationId === m.id)
+        .delete();
+      await db.drafts.delete(m.id);
+      await sync();
+      setMessage("✓ " + L("ลบแล้ว: ", "Deleted: ") + m.data.name);
+      return true;
+    } catch (e: any) {
+      setMessage(
+        friendlyError(e, lang) +
+          L(
+            " (การลบต้องเชื่อมต่ออินเทอร์เน็ต)",
+            " (deleting needs an internet connection)",
+          ),
+      );
+      return false;
+    }
+  }
   const view = s
     ? localView(
         s,
@@ -1651,9 +1690,22 @@ function App() {
               };
               const edit = (m: any) =>
                 view.role !== "viewer" && (
-                  <button className="edit-btn" onClick={() => setEditing(m)}>
-                    ✎ {L("แก้ไข", "Edit")}
-                  </button>
+                  <div className="row-actions">
+                    <button
+                      className="edit-btn"
+                      aria-label={L("แก้ไข ", "Edit ") + m.data.name}
+                      onClick={() => setEditing(m)}
+                    >
+                      ✎ {L("แก้ไข", "Edit")}
+                    </button>
+                    <button
+                      className="edit-btn delete-btn"
+                      aria-label={L("ลบ ", "Delete ") + m.data.name}
+                      onClick={() => removeMedicine(m)}
+                    >
+                      🗑 {L("ลบ", "Delete")}
+                    </button>
+                  </div>
                 );
               const shown = view.medications
                 .filter(
@@ -2179,52 +2231,7 @@ function App() {
                     <button
                       className="danger"
                       onClick={async () => {
-                        if (
-                          !confirm(
-                            L(
-                              "ลบ “" +
-                                detail.data.name +
-                                "” ออกจากรายการ? ใช้เมื่อเพิ่มผิดหรือซ้ำ (ถ้าแพทย์สั่งหยุด ให้กด “หยุดใช้ยา” แทน)",
-                              "Remove “" +
-                                detail.data.name +
-                                "” from the list? Use this for mistakes or duplicates (if the doctor stopped it, use Stop instead).",
-                            ),
-                          )
-                        )
-                          return;
-                        try {
-                          await api(
-                            "/patients/" +
-                              patient +
-                              "/medications/" +
-                              detail.id,
-                            undefined,
-                            "DELETE",
-                          );
-                          // Drop queued edits for the removed medicine.
-                          await db.outbox
-                            .filter(
-                              (o) =>
-                                o.resourceId === detail.id ||
-                                o.data?.medicationId === detail.id,
-                            )
-                            .delete();
-                          setDetail(undefined);
-                          await sync();
-                          setMessage(
-                            "✓ " +
-                              L("ลบแล้ว: ", "Removed: ") +
-                              detail.data.name,
-                          );
-                        } catch (e: any) {
-                          setMessage(
-                            friendlyError(e, lang) +
-                              L(
-                                " (การลบต้องเชื่อมต่ออินเทอร์เน็ต)",
-                                " (removing needs an internet connection)",
-                              ),
-                          );
-                        }
+                        if (await removeMedicine(detail)) setDetail(undefined);
                       }}
                     >
                       🗑 {L("ลบ (เพิ่มผิด/ซ้ำ)", "Delete (mistake/duplicate)")}
@@ -2534,39 +2541,47 @@ function App() {
                 <button
                   className="danger"
                   onClick={async () => {
-                    const count = view.medications.length;
                     if (
-                      !count ||
                       !confirm(
                         L(
-                          "ลบรายการยาทั้งหมด " +
-                            count +
-                            " รายการ แล้วเริ่มใหม่? ข้อมูลผู้ป่วยและประวัติแพ้ยายังอยู่",
-                          "Remove all " +
-                            count +
-                            " medicines and start again? Profile and allergies stay.",
+                          "ล้างข้อมูลทั้งหมดของ “" +
+                            view.profile.data.displayName +
+                            "”? จะลบ: รายการยา ประวัติการใช้ยา ประวัติแพ้ยา รูปถ่าย และสิทธิ์ของผู้ดูแล (บัญชีและเบอร์โทรยังใช้เข้าสู่ระบบได้)",
+                          "Clear all data for “" +
+                            view.profile.data.displayName +
+                            "”? This removes medicines, dose history, allergies, photos and caregiver access (your sign-in stays).",
                         ),
                       ) ||
                       !confirm(
                         L(
-                          "ยืนยันอีกครั้ง: การแจ้งเตือนทั้งหมดจะหยุด และย้อนกลับไม่ได้",
-                          "Confirm again: all reminders stop and this cannot be undone.",
+                          "ยืนยันอีกครั้ง: ข้อมูลจะถูกลบถาวรและกู้คืนไม่ได้",
+                          "Confirm again: the data is deleted permanently and cannot be recovered.",
                         ),
                       )
                     )
                       return;
                     try {
-                      await api("/patients/" + patient + "/reset", {
-                        confirm: "RESET",
+                      const r = await api("/patients/" + patient + "/clear", {
+                        confirm: "CLEAR",
                       });
-                      await db.outbox
-                        .filter((o) => o.patientId === patient)
-                        .delete();
-                      await db.drafts.clear();
+                      await clearPrivate();
+                      await db.meta.put({ key: "actor", value: actor });
                       setSettings(false);
-                      await sync();
+                      setPending([]);
+                      setS(undefined);
+                      setPatients([
+                        {
+                          id: r.id,
+                          data: { ...view.profile.data, allergies: [] },
+                        },
+                      ]);
+                      setPatient(r.id);
+                      await sync(r.id);
                       setMessage(
-                        L("✓ ลบรายการยาทั้งหมดแล้ว", "✓ All medicines removed"),
+                        L(
+                          "✓ ล้างข้อมูลทั้งหมดแล้ว เริ่มใหม่ได้เลย",
+                          "✓ All data cleared. You can start again.",
+                        ),
                       );
                     } catch (e: any) {
                       setMessage(
@@ -2579,12 +2594,14 @@ function App() {
                     }
                   }}
                 >
-                  🗑{" "}
-                  {L(
-                    "ลบรายการยาทั้งหมดและเริ่มใหม่",
-                    "Delete all medicines and start over",
-                  )}
+                  🗑 {L("ล้างข้อมูลทั้งหมด", "Clear all data")}
                 </button>
+                <p className="hint">
+                  {L(
+                    "ลบรายการยา ประวัติ ประวัติแพ้ยา รูป และผู้ดูแลทั้งหมด แต่ยังเข้าสู่ระบบด้วยเบอร์และรหัสเดิมได้",
+                    "Removes medicines, history, allergies, photos and caregivers. You keep your phone sign-in.",
+                  )}
+                </p>
               </>
             )}
           </section>

@@ -33,50 +33,58 @@ export async function runRetention(limit = 5, budgetMs = 25000) {
   ).rows;
   for (const p of patients) {
     if (Date.now() >= deadline) break;
-    const photos = (
-      await pool.query("SELECT storage_key FROM photos WHERE patient_id=$1", [
-        p.id,
-      ])
-    ).rows;
-    if (photos.length && process.env.SUPABASE_URL) {
-      const { error } = await supabase()
-        .storage.from(process.env.PRIVATE_PHOTO_BUCKET || "medication-photos")
-        .remove(photos.map((x) => x.storage_key));
-      if (error)
-        throw new Error("Private storage purge failed; retry retention job");
-    }
-    await transaction(async (c) => {
-      await c.query(
-        "DELETE FROM push_observations WHERE job_id IN (SELECT id FROM reminder_jobs WHERE patient_id=$1)",
-        [p.id],
-      );
-      await c.query(
-        "DELETE FROM push_attempts WHERE job_id IN (SELECT id FROM reminder_jobs WHERE patient_id=$1)",
-        [p.id],
-      );
-      await c.query(
-        "DELETE FROM regimen_supersessions WHERE regimen_id IN (SELECT id FROM regimen_versions WHERE patient_id=$1)",
-        [p.id],
-      );
-      for (const table of [
-        "reminder_jobs",
-        "reminder_preferences",
-        "snoozes",
-        "dose_events",
-        "dose_occurrences",
-        "photos",
-        "regimen_versions",
-        "schedule_issues",
-        "medications",
-        "invitations",
-        "audit_events",
-        "change_feed",
-        "memberships",
-      ])
-        await c.query("DELETE FROM " + table + " WHERE patient_id=$1", [p.id]);
-      await c.query("DELETE FROM patients WHERE id=$1", [p.id]);
-    });
+    await purgePatient(p.id);
     purgedProfiles++;
   }
   return { deletedIdentities, purgedProfiles };
+}
+
+/** Permanently removes a tombstoned profile's records and private photos. */
+export async function purgePatient(id: string) {
+  const tombstoned = await pool.query(
+    "SELECT 1 FROM patients WHERE id=$1 AND deleted_at IS NOT NULL",
+    [id],
+  );
+  if (!tombstoned.rowCount) throw new Error("Only removed profiles are purged");
+  const photos = (
+    await pool.query("SELECT storage_key FROM photos WHERE patient_id=$1", [id])
+  ).rows;
+  if (photos.length && process.env.SUPABASE_URL) {
+    const { error } = await supabase()
+      .storage.from(process.env.PRIVATE_PHOTO_BUCKET || "medication-photos")
+      .remove(photos.map((x) => x.storage_key));
+    if (error)
+      throw new Error("Private storage purge failed; retry retention job");
+  }
+  await transaction(async (c) => {
+    await c.query(
+      "DELETE FROM push_observations WHERE job_id IN (SELECT id FROM reminder_jobs WHERE patient_id=$1)",
+      [id],
+    );
+    await c.query(
+      "DELETE FROM push_attempts WHERE job_id IN (SELECT id FROM reminder_jobs WHERE patient_id=$1)",
+      [id],
+    );
+    await c.query(
+      "DELETE FROM regimen_supersessions WHERE regimen_id IN (SELECT id FROM regimen_versions WHERE patient_id=$1)",
+      [id],
+    );
+    for (const table of [
+      "reminder_jobs",
+      "reminder_preferences",
+      "snoozes",
+      "dose_events",
+      "dose_occurrences",
+      "photos",
+      "regimen_versions",
+      "schedule_issues",
+      "medications",
+      "invitations",
+      "audit_events",
+      "change_feed",
+      "memberships",
+    ])
+      await c.query("DELETE FROM " + table + " WHERE patient_id=$1", [id]);
+    await c.query("DELETE FROM patients WHERE id=$1", [id]);
+  });
 }
