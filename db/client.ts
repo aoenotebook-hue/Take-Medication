@@ -1,7 +1,28 @@
 import "dotenv/config";
 import pg from "pg";
+import { rootCertificates } from "node:tls";
 import { attachDatabasePool } from "@vercel/functions";
+import { SUPABASE_ROOT_CA } from "./supabase-ca.js";
+// DATE columns (e.g. dose_occurrences.local_date) are calendar days in the
+// schedule's timezone. pg's default turns them into Date objects at server-local
+// midnight, which serialize as timestamps and never equal "YYYY-MM-DD" in the app.
+pg.types.setTypeParser(pg.types.builtins.DATE, (value) => value);
+// Supabase direct hosts (db.<ref>.supabase.co) are IPv6-only and do not resolve
+// from Vercel functions (ENOTFOUND). There, use the IPv4 pooler URL that the
+// Supabase-Vercel integration maintains instead. A pooler DATABASE_URL still wins.
+const directSupabaseHost = (url = "") => {
+  try {
+    return /^db\.[a-z0-9]+\.supabase\.co$/.test(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+};
 const connectionString =
+  (process.env.VERCEL &&
+    process.env.POSTGRES_URL &&
+    (!process.env.DATABASE_URL ||
+      directSupabaseHost(process.env.DATABASE_URL)) &&
+    process.env.POSTGRES_URL) ||
   process.env.DATABASE_URL ||
   "postgres://medication:local-only@localhost:5432/medication";
 // Do not let URL sslmode options disable certificate verification in production.
@@ -15,9 +36,14 @@ export const pool = new pg.Pool({
     process.env.NODE_ENV === "production"
       ? {
           rejectUnauthorized: true,
-          ...(process.env.DATABASE_SSL_CA
-            ? { ca: process.env.DATABASE_SSL_CA }
-            : {}),
+          // Keep public roots and add Supabase's private root; never disable verification.
+          ca: [
+            ...rootCertificates,
+            SUPABASE_ROOT_CA,
+            ...(process.env.DATABASE_SSL_CA
+              ? [process.env.DATABASE_SSL_CA]
+              : []),
+          ],
         }
       : undefined,
   max: process.env.VERCEL ? 3 : 10,
@@ -26,8 +52,11 @@ export const pool = new pg.Pool({
   statement_timeout: process.env.VERCEL ? 15000 : 0,
 });
 if (process.env.VERCEL) attachDatabasePool(pool);
-pool.on("error", () =>
-  console.error("Idle database connection failed; retry required"),
+pool.on("error", (e: any) =>
+  console.error(
+    "Idle database connection failed; retry required",
+    e?.code || e?.name || "unknown",
+  ),
 );
 export async function transaction<T>(
   fn: (c: pg.PoolClient) => Promise<T>,

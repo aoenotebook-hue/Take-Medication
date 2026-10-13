@@ -334,3 +334,247 @@ pre {
   border-radius: 8px;
   margin-right: 0.5rem;
 }
+.lead {
+  font-size: 1.1rem;
+}
+.about summary,
+.done-group summary,
+.advanced summary {
+  min-height: 44px;
+  padding: 0.5rem 0;
+  cursor: pointer;
+  font-weight: 600;
+}
+.code-input {
+  font-size: 1.6rem;
+  letter-spacing: 0.3em;
+  text-align: center;
+}
+.next-dose {
+  display: grid;
+  gap: 0.2rem;
+  background: #155e52;
+  color: white;
+  border-radius: 18px;
+  padding: 1rem 1.2rem;
+  margin: 0.5rem 0 1rem;
+}
+.next-time {
+  font-size: 2.2rem;
+  line-height: 1.2;
+}
+.next-dose .progress {
+  font-size: 0.85rem;
+  border-top: 1px solid #ffffff55;
+  padding-top: 0.4rem;
+  margin-top: 0.3rem;
+}
+.time-group {
+  margin: 1.2rem 0;
+}
+.time-group > h2 {
+  font-size: 1.4rem;
+  margin: 0;
+}
+.dose-amount {
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+.status-taken,
+.status-skipped {
+  background: #f3f6f4;
+}
+.status-taken .badge {
+  background: #d6ecdf;
+  color: #0f4d33;
+}
+.status-conflict {
+  border: 2px solid #9a4d0a;
+}
+.done-group {
+  margin: 1.2rem 0;
+  border-top: 1px solid #cfdbd3;
+}
+.sync {
+  border-radius: 12px;
+  padding: 0.5rem 0.8rem;
+  margin: 0.7rem 0;
+  justify-content: space-between;
+}
+.sync.ok {
+  background: #e4f1e9;
+}
+.sync.pending,
+.sync.off {
+  background: #fff4de;
+  color: #5c350d;
+}
+.dismissible {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+.dismissible button {
+  min-width: 44px;
+  min-height: 44px;
+  flex-shrink: 0;
+}
+.settings-group {
+  border-top: 1px solid #cfdbd3;
+  padding: 0.6rem 0;
+}
+.settings-group > button {
+  display: block;
+  width: 100%;
+  margin: 0.5rem 0;
+}
+.checklist {
+  list-style: none;
+  padding: 0;
+}
+.checklist li {
+  padding: 0.3rem 0;
+}
+.checklist .ok span[aria-hidden] {
+  color: #0f6b45;
+  font-weight: 700;
+}
+.check {
+  display: flex;
+  align-items: center;
+}
+.confirm-box {
+  background: #e4eee7;
+  border-radius: 12px;
+  padding: 0.8rem;
+  font-weight: 600;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+button.danger {
+  color: #8f1d12;
+  border-color: #b3554a;
+}
+.stepper {
+  display: flex;
+  gap: 0.3rem;
+  margin-bottom: 1rem;
+}
+.stepper span {
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
+  background: #d5e0d9;
+}
+.stepper span.done {
+  background: #155e52;
+}
+.step-label {
+  margin: 0 0 0.4rem;
+}
+.file-button {
+  display: block;
+  padding: 1rem;
+  border: 2px dashed #8aa29a;
+  border-radius: 14px;
+  background: #f5f9f6;
+  font-weight: 600;
+}
+.file-button input {
+  margin-top: 0.5rem;
+}
+.hint {
+  margin: -0.7rem 0 0.8rem;
+  color: #466259;
+  font-size: 0.85rem;
+}
+.pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+}
+.pair label {
+  margin: 0.5rem 0;
+}
+.weekdays {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.5rem 0;
+}
+.weekdays > span {
+  width: 100%;
+}
+.weekdays .day {
+  min-width: 52px;
+  min-height: 48px;
+  padding: 0.2rem;
+}
+.weekdays .day.on {
+  background: #155e52;
+  color: white;
+  border-color: #155e52;
+}
+.link-button {
+  border: 0;
+  background: none;
+  text-decoration: underline;
+  min-height: 44px;
+}
+.add-slot {
+  width: 100%;
+  border-style: dashed;
+  font-weight: 600;
+}
+.review dt {
+  font-size: 0.8rem;
+  color: #466259;
+  margin-top: 0.5rem;
+}
+.review dd {
+  margin: 0;
+  font-weight: 600;
+}
+.device-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.history-row {
+  border-bottom: 1px solid #e1e9e4;
+  padding: 0.4rem 0;
+  margin: 0;
+}
+.form-nav {
+  margin-top: 1rem;
+}
+.form-nav .primary {
+  flex: 1;
+}
+@media (max-width: 450px) {
+  .pair {
+    grid-template-columns: 1fr;
+  }
+  .next-time {
+    font-size: 1.8rem;
+  }
+}
+.medicine-card .actions button {
+  flex: 1 1 8rem;
+}
+.medicine-card .actions .primary {
+  flex-basis: 100%;
+}
+.medicine-card .actions small {
+  flex-basis: 100%;
+}

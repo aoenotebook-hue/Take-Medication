@@ -730,6 +730,15 @@ app.use(
       res.status(422).json({ error: "Invalid input", fields: e.issues });
       return;
     }
+    // Error class/code only: messages can contain patient data or connection details.
+    if (!e.status)
+      console.error(
+        "Request failed",
+        _req.method,
+        _req.route?.path || "unmatched",
+        e?.name || "Error",
+        e?.code || "",
+      );
     res.status(e.status || 500).json({
       error: e.status ? e.message : "Request failed",
       current: e.current,
