@@ -65,24 +65,18 @@ test("large camera photo is compressed offline and uploaded within the hosting l
   await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
   await context.setOffline(true);
   await page.getByRole("button", { name: "เพิ่มยา" }).click();
-  await page
-    .locator('input[type="file"]')
-    .first()
-    .setInputFiles({
-      name: "synthetic-camera.png",
-      mimeType: "image/png",
-      buffer: photo,
-    });
-  await page.getByRole("button", { name: "ถัดไป", exact: true }).click();
+  await page.locator('input[type="file"]').first().setInputFiles({
+    name: "synthetic-camera.png",
+    mimeType: "image/png",
+    buffer: photo,
+  });
   await page
     .getByLabel("ชื่อยา", { exact: true })
     .fill("Synthetic photo " + Date.now());
-  await page.getByRole("button", { name: "ถัดไป", exact: true }).click();
-  await page.getByLabel("วิธีใช้ยา", { exact: true }).fill("oral");
-  await page.getByLabel("คำแนะนำเดิม").fill("Synthetic original instructions");
-  await page.getByRole("button", { name: "ถัดไป", exact: true }).click();
-  await page.getByRole("button", { name: "ถัดไป", exact: true }).click();
-  await page.getByRole("button", { name: "บันทึก", exact: true }).click();
+  await page
+    .getByLabel("ข้อความบนฉลากยา (ถ้ามี)")
+    .fill("Synthetic original instructions");
+  await page.getByRole("button", { name: /บันทึกเป็นแบบร่าง/ }).click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
   const saved = await page.evaluate(
     async () =>
@@ -134,15 +128,12 @@ test("guided manual draft without photos and 200% layout", async ({
   await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
   await context.setOffline(true);
   await page.getByRole("button", { name: "เพิ่มยา" }).click();
-  await page.getByRole("button", { name: "ถัดไป", exact: true }).click();
   await page.getByLabel("ชื่อยา", { exact: true }).fill(name);
-  await page.getByLabel("ความแรง / ข้อความบนฉลาก").fill("5 mg + 10 mg");
-  await page.getByRole("button", { name: "ถัดไป", exact: true }).click();
-  await page.getByLabel("วิธีใช้ยา", { exact: true }).fill("oral");
-  await page.getByLabel("คำแนะนำเดิม").fill("Synthetic original instructions");
-  await page.getByRole("button", { name: "ถัดไป", exact: true }).click();
-  await page.getByRole("button", { name: "ถัดไป", exact: true }).click();
-  await page.getByRole("button", { name: "บันทึก", exact: true }).click();
+  await page.getByLabel("ความแรง (ถ้ามี)").fill("5 mg + 10 mg");
+  await page
+    .getByLabel("ข้อความบนฉลากยา (ถ้ามี)")
+    .fill("Synthetic original instructions");
+  await page.getByRole("button", { name: /บันทึกเป็นแบบร่าง/ }).click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await page.getByLabel("สถานะ", { exact: true }).selectOption("draft");
   await expect(page.getByRole("heading", { name })).toBeVisible();
@@ -179,4 +170,52 @@ test("guided manual draft without photos and 200% layout", async ({
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
+});
+test("one-page entry fills chips from label wording and saves an active medicine", async ({
+  page,
+}) => {
+  const name = "Synthetic label " + Date.now();
+  await page.goto("/");
+  await page.getByRole("button", { name: "ทดลองด้วยข้อมูลสมมติ" }).click();
+  await page.getByRole("button", { name: "ยาของฉัน", exact: true }).click();
+  await page.getByRole("button", { name: "เพิ่มยา" }).click();
+  await page.getByLabel("ชื่อยา", { exact: true }).fill(name);
+  await page
+    .getByLabel("ข้อความบนฉลากยา (ถ้ามี)")
+    .fill("รับประทานครั้งละ 1 เม็ด วันละ 2 ครั้ง หลังอาหาร เช้า เย็น");
+  await page.getByLabel("ความแรง (ถ้ามี)").focus();
+  const dialog = page.getByRole("dialog");
+  for (const chip of ["1", "เม็ด", "เช้า", "เย็น", "หลังอาหาร", "ทุกวัน"])
+    await expect(
+      dialog.getByRole("button", { name: chip, exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
+  await expect(dialog.getByText(/เติมให้จากฉลาก/)).toBeVisible();
+  // Saving without the confirmation tick explains what is missing.
+  await dialog.getByRole("button", { name: /^✓ บันทึก$/ }).click();
+  await expect(dialog.getByRole("alert")).toContainText("ติ๊กยืนยัน");
+  await dialog.getByLabel("ข้อมูลนี้ตรงกับใบสั่งยา").check();
+  await dialog.getByRole("button", { name: /^✓ บันทึก$/ }).click();
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  await page.getByRole("button", { name: "ลองซิงค์อีกครั้ง" }).click();
+  await expect(
+    page.getByText("เซิร์ฟเวอร์รับข้อมูลทั้งหมดแล้ว", { exact: false }),
+  ).toBeVisible();
+  const card = page.locator("article", { hasText: name });
+  await expect(card.getByText("ใช้อยู่")).toBeVisible();
+  await expect(card.getByText("08:00 · 1 เม็ด")).toBeVisible();
+  await expect(card.getByText("18:00 · 1 เม็ด")).toBeVisible();
+  // Editing keeps the one-page form filled and records a reason automatically.
+  await card.getByRole("button", { name: "เปิดข้อมูลยา" }).click();
+  await page.getByRole("button", { name: /แก้ไขข้อมูลยา/ }).click();
+  const edit = page.getByRole("dialog");
+  await expect(edit.getByLabel("ชื่อยา", { exact: true })).toHaveValue(name);
+  await edit.getByRole("button", { name: "กลางวัน", exact: true }).click();
+  await edit.getByLabel("ข้อมูลนี้ตรงกับใบสั่งยา").check();
+  await edit.getByRole("button", { name: /^✓ บันทึก$/ }).click();
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  await page.getByRole("button", { name: "ลองซิงค์อีกครั้ง" }).click();
+  await expect(
+    page.getByText("เซิร์ฟเวอร์รับข้อมูลทั้งหมดแล้ว", { exact: false }),
+  ).toBeVisible();
+  await expect(card.getByText("12:00 · 1 เม็ด")).toBeVisible();
 });
