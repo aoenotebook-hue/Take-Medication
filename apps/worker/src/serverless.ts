@@ -1,7 +1,7 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
-import { pool, transaction } from "../../../db/client";
-import { regenerate } from "../../api/src/service";
-import { dispatchOne, enqueueJobs, heartbeat } from "./worker";
+import { pool, transaction } from "../../../db/client.js";
+import { regenerate } from "../../api/src/service.js";
+import { dispatchOne, enqueueJobs, heartbeat } from "./worker.js";
 
 export function cronAuthorized(
   header: string | undefined,

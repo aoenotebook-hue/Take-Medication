@@ -1,5 +1,5 @@
-import { pool, transaction } from "../../../db/client";
-import { supabase } from "../../api/src/auth";
+import { pool, transaction } from "../../../db/client.js";
+import { supabase } from "../../api/src/auth.js";
 export async function runRetention(limit = 5, budgetMs = 25000) {
   const deadline = Date.now() + budgetMs;
   let deletedIdentities = 0,

@@ -5,22 +5,22 @@ import { rateLimit } from "express-rate-limit";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import sharp from "sharp";
 import { z } from "zod";
-import { pool, transaction } from "../../../db/client";
+import { pool, transaction } from "../../../db/client.js";
 import {
   applyOperation,
   authorize,
   audit,
   snapshot,
   HttpError,
-} from "./service";
-import { authenticate, demoEnabled, demoToken, supabase } from "./auth";
-import { seal } from "./secrets";
-import { validateEndpoint } from "../../worker/src/push";
-import { cronAuthorized, runReminderBatch } from "../../worker/src/serverless";
-import { PostgresRateStore } from "./rate-store";
-import { productionConfigErrors } from "../../../scripts/production-config";
+} from "./service.js";
+import { authenticate, demoEnabled, demoToken, supabase } from "./auth.js";
+import { seal } from "./secrets.js";
+import { validateEndpoint } from "../../worker/src/push.js";
+import { cronAuthorized, runReminderBatch } from "../../worker/src/serverless.js";
+import { PostgresRateStore } from "./rate-store.js";
+import { productionConfigErrors } from "../../../scripts/production-config.js";
 import { once } from "node:events";
-import { runRetention } from "../../worker/src/retention";
+import { runRetention } from "../../worker/src/retention.js";
 if (process.env.VERCEL) {
   const errors = productionConfigErrors(process.env);
   if (errors.length)

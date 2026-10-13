@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { SignJWT, jwtVerify } from "jose";
 import { randomBytes } from "node:crypto";
-import { HttpError } from "./service";
+import { HttpError } from "./service.js";
 const demoKey = randomBytes(32);
 export const demoEnabled = () =>
   process.env.LOCAL_DEMO === "true" && process.env.NODE_ENV !== "production";

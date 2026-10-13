@@ -1,4 +1,4 @@
-import { pool } from "./client";
+import { pool } from "./client.js";
 export const demoUser = "11111111-1111-4111-a111-111111111111";
 export const demoPatient = "22222222-2222-4222-a222-222222222222";
 if (process.env.NODE_ENV === "production")

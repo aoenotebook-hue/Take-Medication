@@ -47,6 +47,10 @@ Configuration performs these operations:
 
 The build rejects absent or privileged frontend keys. Runtime startup rejects missing secrets, synthetic authentication and simulated push. Local photo inputs accept JPEG/PNG/WebP up to 8 MB, then strip metadata and compress below 2 MB before entering the offline queue. The API independently validates/re-encodes images and enforces the same upload limit. Account JSON exports stream records and individual photos instead of buffering all photos together; very large account histories still need pagination and scale testing.
 
+The Vercel build also accepts standard Supabase integration aliases (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_ANON_KEY`). An omitted URL defaults to the selected project above; a public key is always required. Set the variables for **Production**, then redeploy: changing variables does not repair an already failed build. Never substitute a secret/service-role key. Ensure `NODEJS_HELPERS=0` is also configured, as the provisioning script does, so Express receives raw request bodies.
+
+The API uses explicit `.js` import paths and its own Node-only TypeScript configuration. `npm run check:api-build` emits and loads the API with plain Node and synthetic production configuration, catching startup errors that tsx-based development tests can miss. This check runs in CI. Node is pinned to major version 24.
+
 ## Deploy and check
 
 Use an exact source commit whose **Verification** workflow passed. Put its full SHA in `DEPLOY_COMMIT`; do not use a moving branch name.

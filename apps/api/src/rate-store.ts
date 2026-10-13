@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { pool } from "../../../db/client";
+import { pool } from "../../../db/client.js";
 import type { Options, Store } from "express-rate-limit";
 
 // Shared across cold starts; store only a hash of the limiter key.

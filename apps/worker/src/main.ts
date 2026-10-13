@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { refreshHorizon, enqueueJobs, dispatchOne, heartbeat } from "./worker";
+import { refreshHorizon, enqueueJobs, dispatchOne, heartbeat } from "./worker.js";
 if (
   process.env.NODE_ENV === "production" &&
   process.env.PUSH_ADAPTER === "simulated"

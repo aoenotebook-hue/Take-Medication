@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { pool, transaction } from "./client";
+import { pool, transaction } from "./client.js";
 await transaction(async (c) => {
   await c.query("SELECT pg_advisory_xact_lock(846101)");
   await c.query(

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import { DateTime } from "luxon";
 import { z } from "zod";
-import { pool, transaction } from "../../../db/client";
+import { pool, transaction } from "../../../db/client.js";
 import {
   medicationSchema,
   regimenSchema,
@@ -10,7 +10,7 @@ import {
   generateOccurrences,
   projectDose,
   type Regimen,
-} from "../../../packages/domain/src";
+} from "../../../packages/domain/src/index.js";
 export class HttpError extends Error {
   constructor(
     public status: number,

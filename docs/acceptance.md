@@ -8,10 +8,12 @@ Final commands and counts are recorded below after the final regression run. Tes
 
 - `npm run migrate`: transactional numbered migrations applied successfully; repeated invocation is safe.
 - `npm run typecheck`: TypeScript check passed.
-- `npm test`: **45 tests passed** (recurrence/quantities/status, real PostgreSQL transactions/worker/authorization, HTTP security, bounded serverless horizon/lease recovery, distributed rate counters, RLS browser isolation and 1/10/30-medicine Thai PDFs).
+- `npm test`: **50 tests passed** (recurrence/quantities/status, real PostgreSQL transactions/worker/authorization, HTTP security, bounded serverless horizon/lease recovery, distributed rate counters, RLS browser isolation, public-key alias/secret rejection and 1/10/30-medicine Thai PDFs).
+- `npm run check:api-build`: emitted production API loaded with plain Node, synthetic production configuration and no network calls. The local Vercel function builder also packaged and loaded the API; explicit file extensions, Node-only type configuration and response-streaming metadata were verified.
 - `npm run build`: installable build and service-worker precache generated. Vite reports large PDF/application chunks; they are included in the offline cache.
 - `npm run test:browser`: **3 tests passed** (Thai navigation/axe, cached offline cold-open, sign-out cache purge, guided manual entry, offline mutation replay, large-photo offline compression/upload, offline PDF download, 200% layout).
-- Vercel build guard rejected a synthetic private frontend key. Hosting provisioning stopped before network writes because `VERCEL_TOKEN`, `SUPABASE_ACCESS_TOKEN` and `DATABASE_URL` were absent. Provider setup/deployment scripts are prepared; their remote execution and live checks remain unrun.
+- Vercel build guard rejected a synthetic private frontend key; a build using a standard public-key integration alias passed. The latest local browser run used a 90-second overall test budget after timeouts on a busy runner; all assertions were retained and all three cases passed. CI retains its standard time budget.
+- The owner-provided Vercel log confirmed missing frontend public-key configuration. The owner added both production variables. Secure provider access and direct public-host access are still unavailable in this task environment, so authenticated live checks and remote provisioning remain unrun.
 - `npx tsx scripts/restore-drill.ts`: encrypted custom-format PostgreSQL backup restored into a temporary isolated database; medication, dose-event, membership, audit and photo counts matched. The temporary restore database was removed.
 - Official MDN source documentation was read for Push API and notification-click lifetime/routing behavior. The OFL Thai font license is bundled.
 

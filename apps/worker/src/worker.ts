@@ -1,9 +1,9 @@
 import { randomUUID, createHash } from "node:crypto";
-import { pool, transaction } from "../../../db/client";
-import { regenerate } from "../../api/src/service";
-import { genericPush, projectDose } from "../../../packages/domain/src";
-import { unseal } from "../../api/src/secrets";
-import { sendPush } from "./push";
+import { pool, transaction } from "../../../db/client.js";
+import { regenerate } from "../../api/src/service.js";
+import { genericPush, projectDose } from "../../../packages/domain/src/index.js";
+import { unseal } from "../../api/src/secrets.js";
+import { sendPush } from "./push.js";
 export async function refreshHorizon() {
   await transaction(async (c) => {
     await c.query("SELECT pg_advisory_xact_lock(846102)");
