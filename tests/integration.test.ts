@@ -441,7 +441,7 @@ describe("Durable queue", () => {
   });
   it("404/410 disables subscription and does not retry", async () => {
     await pool.query(
-      "INSERT INTO reminder_jobs(id,patient_id,subscription_id,group_key,revision,occurrence_ids,kind,due_at,expires_at) VALUES($1::uuid,$2,$3,$1::text,'410','[]','test',now(),now()+interval '10 minutes')",
+      "INSERT INTO reminder_jobs(id,patient_id,subscription_id,group_key,revision,occurrence_ids,kind,due_at,expires_at) VALUES($1::uuid,$2,$3,$1::text,'410','[]','test',now()-interval '1 second',now()+interval '10 minutes')",
       [randomUUID(), patient, subscription],
     );
     await dispatchOne(new Date(), async () => {
@@ -463,7 +463,7 @@ describe("Durable queue", () => {
     );
     const id = randomUUID();
     await pool.query(
-      "INSERT INTO reminder_jobs(id,patient_id,subscription_id,group_key,revision,occurrence_ids,kind,due_at,expires_at) VALUES($1::uuid,$2,$3,$1::text,'retry','[]','test',now(),now()+interval '10 minutes')",
+      "INSERT INTO reminder_jobs(id,patient_id,subscription_id,group_key,revision,occurrence_ids,kind,due_at,expires_at) VALUES($1::uuid,$2,$3,$1::text,'retry','[]','test',now()-interval '1 second',now()+interval '10 minutes')",
       [id, patient, subscription],
     );
     const before = Date.now();
