@@ -39,7 +39,10 @@ async function api(path: string, body?: any, method = body ? "POST" : "GET") {
   });
   if (!r.ok) {
     const e = await r.json().catch(() => ({ error: "Server unavailable" }));
-    throw Object.assign(new Error(e.error), { status: r.status });
+    throw Object.assign(new Error(e.error), {
+      status: r.status,
+      current: e.current,
+    });
   }
   return r.json();
 }
@@ -153,13 +156,54 @@ function friendlyError(e: any, lang: Language): string {
     return [...new Set(messages)].join(" · ");
   }
   const message = String(e?.message || e || "");
+  if (message === "Wrong phone number or PIN") {
+    const left = e?.current?.attemptsLeft;
+    return (
+      (th ? "เบอร์โทรหรือรหัส 4 หลักไม่ถูกต้อง" : "Wrong phone number or PIN") +
+      (left === undefined
+        ? ""
+        : left > 0
+          ? th
+            ? ` (ลองได้อีก ${left} ครั้ง)`
+            : ` (${left} tries left)`
+          : th
+            ? " ระบบล็อกชั่วคราวเพื่อความปลอดภัย"
+            : ". Locked for a while for safety.")
+    );
+  }
+  if (message === "Too many wrong PINs") {
+    const until = e?.current?.lockedUntil
+      ? DateTime.fromISO(e.current.lockedUntil).toFormat("HH:mm")
+      : "";
+    return th
+      ? `ใส่รหัสผิดหลายครั้ง ล็อกไว้ชั่วคราว ลองใหม่ได้หลังเวลา ${until} น.`
+      : `Too many wrong PINs. Try again after ${until}.`;
+  }
+  if (message === "Invalid phone number")
+    return th
+      ? "เบอร์โทรไม่ถูกต้อง เช่น 081-234-5678"
+      : "Invalid phone number, e.g. 081-234-5678";
+  if (message === "PIN must be exactly 4 digits")
+    return th ? "รหัสต้องเป็นตัวเลข 4 หลัก" : "The PIN must be 4 digits";
+  if (message === "PIN is too easy to guess")
+    return th
+      ? "รหัสนี้เดาง่ายเกินไป เช่น 1234 หรือ 0000 กรุณาเลือกใหม่"
+      : "That PIN is too easy to guess (like 1234 or 0000). Choose another.";
+  if (message === "This phone number is already registered")
+    return th
+      ? "เบอร์นี้สมัครไว้แล้ว กรุณาเข้าสู่ระบบ"
+      : "This number is already registered. Please sign in.";
+  if (/sign-in service unavailable/i.test(message))
+    return th
+      ? "ระบบเข้าสู่ระบบขัดข้องชั่วคราว กรุณาลองใหม่"
+      : "Sign-in is temporarily unavailable. Please try again.";
   if (/expired|invalid.*(otp|token)|token.*invalid/i.test(message))
     return th
       ? "รหัสไม่ถูกต้องหรือหมดอายุ กรุณาขอรหัสใหม่"
       : "The code is wrong or expired. Please request a new code.";
   if (/rate limit|security purposes|too many/i.test(message))
     return th
-      ? "ขอรหัสบ่อยเกินไป กรุณารอสักครู่แล้วลองใหม่"
+      ? "ลองหลายครั้งเกินไป กรุณารอสักครู่แล้วลองใหม่"
       : "Too many requests. Please wait a minute and try again.";
   if (/failed to fetch|network|server unavailable/i.test(message))
     return th
@@ -189,7 +233,8 @@ function App() {
     [devices, setDevices] = useState<any[]>([]),
     [email, setEmail] = useState(""),
     [code, setCode] = useState(""),
-    [otpSent, setOtpSent] = useState(false),
+    [registering, setRegistering] = useState(false),
+    [pin2, setPin2] = useState(""),
     [seen, setSeen] = useState(false),
     [registered, setRegistered] = useState(false),
     [permission, setPermission] = useState(
@@ -693,24 +738,28 @@ function App() {
       </select>
     </label>
   );
-  async function sendCode() {
-    if (!auth) return;
-    setBusy(true);
-    try {
-      const { error } = await auth.auth.signInWithOtp({
-        email: email.trim(),
-        options: { shouldCreateUser: true },
-      });
-      if (error) throw error;
-      setOtpSent(true);
-      setCode("");
-      setMessage("");
-    } catch (e: any) {
-      setMessage(friendlyError(e, lang));
-    } finally {
-      setBusy(false);
-    }
-  }
+  const pinInput = (name: string, label: string, isNew: boolean) => (
+    <label>
+      {label}
+      <input
+        name={name}
+        type="password"
+        required
+        inputMode="numeric"
+        pattern="[0-9]{4}"
+        maxLength={4}
+        minLength={4}
+        autoComplete={isNew ? "new-password" : "current-password"}
+        className="code-input"
+        value={name === "pin2" ? pin2 : code}
+        onChange={(e) =>
+          (name === "pin2" ? setPin2 : setCode)(
+            e.target.value.replace(/\D/g, "").slice(0, 4),
+          )
+        }
+      />
+    </label>
+  );
   if (!signed)
     return (
       <main className="welcome">
@@ -747,17 +796,31 @@ function App() {
           <form
             onSubmit={async (e) => {
               e.preventDefault();
-              if (!otpSent) return sendCode();
+              if (registering && code !== pin2) {
+                setMessage(
+                  L(
+                    "รหัส 4 หลักทั้งสองช่องไม่ตรงกัน",
+                    "The two PINs do not match",
+                  ),
+                );
+                return;
+              }
               setBusy(true);
               try {
-                const { data, error } = await auth.auth.verifyOtp({
-                  email: email.trim(),
-                  token: code.trim(),
-                  type: "email",
+                const r = await api(
+                  registering ? "/auth/pin/register" : "/auth/pin/login",
+                  { phone: email, pin: code },
+                );
+                const { error } = await auth.auth.setSession({
+                  access_token: r.access_token,
+                  refresh_token: r.refresh_token,
                 });
                 if (error) throw error;
-                token = data.session!.access_token;
-                actor = data.user!.id;
+                token = r.access_token;
+                actor = r.user_id;
+                setCode("");
+                setPin2("");
+                setMessage("");
                 await afterLogin();
               } catch (e: any) {
                 setMessage(friendlyError(e, lang));
@@ -766,64 +829,79 @@ function App() {
               }
             }}
           >
-            {!otpSent ? (
-              <label>
-                {t.email}
-                <input
-                  type="email"
-                  required
-                  autoComplete="email"
-                  inputMode="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
-              </label>
-            ) : (
+            <h2>
+              {registering
+                ? L("สมัครใช้งานครั้งแรก", "Create your account")
+                : L("เข้าสู่ระบบ", "Sign in")}
+            </h2>
+            <label>
+              {L("เบอร์โทรศัพท์", "Phone number")}
+              <input
+                name="phone"
+                type="tel"
+                required
+                autoComplete="username"
+                inputMode="tel"
+                placeholder="08x-xxx-xxxx"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </label>
+            {pinInput(
+              "pin",
+              registering
+                ? L("ตั้งรหัส 4 หลักของคุณเอง", "Choose your own 4-digit PIN")
+                : L("รหัส 4 หลัก", "4-digit PIN"),
+              registering,
+            )}
+            {registering && (
               <>
-                <p>
-                  {t.codeSent} <strong>{email}</strong>
-                  <br />
-                  <small>
-                    {L(
-                      "เปิดอีเมลแล้วพิมพ์รหัสตัวเลขที่ได้รับ (อาจอยู่ในโฟลเดอร์ขยะ)",
-                      "Open the email and type the number code (check spam too).",
-                    )}
-                  </small>
+                {pinInput(
+                  "pin2",
+                  L("ใส่รหัส 4 หลักอีกครั้ง", "Type the PIN again"),
+                  true,
+                )}
+                <p className="hint">
+                  {L(
+                    "จดรหัสไว้ในที่ปลอดภัย ห้ามใช้ 1234, 0000 หรือเลขเรียงกัน",
+                    "Keep it somewhere safe. Avoid 1234, 0000 or digits in a row.",
+                  )}
                 </p>
-                <label>
-                  {t.code}
-                  <input
-                    required
-                    value={code}
-                    onChange={(e) => setCode(e.target.value.replace(/\s/g, ""))}
-                    autoComplete="one-time-code"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    maxLength={10}
-                    className="code-input"
-                  />
-                </label>
               </>
             )}
             <button className="primary" disabled={busy}>
-              {busy ? t.loading : otpSent ? t.signIn : t.sendCode}
+              {busy
+                ? t.loading
+                : registering
+                  ? L("สมัครและเข้าสู่ระบบ", "Create account")
+                  : t.signIn}
             </button>
-            {otpSent && (
-              <div className="actions">
-                <button type="button" disabled={busy} onClick={sendCode}>
-                  {t.resend}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setOtpSent(false);
-                    setCode("");
-                    setMessage("");
-                  }}
-                >
-                  {t.changeEmail}
-                </button>
-              </div>
+            <button
+              type="button"
+              onClick={() => {
+                setRegistering(!registering);
+                setCode("");
+                setPin2("");
+                setMessage("");
+              }}
+            >
+              {registering
+                ? L("มีบัญชีแล้ว? เข้าสู่ระบบ", "Already registered? Sign in")
+                : L(
+                    "ใช้ครั้งแรก? สมัครด้วยเบอร์โทร",
+                    "First time? Register with your phone",
+                  )}
+            </button>
+            {!registering && (
+              <details className="about">
+                <summary>{L("ลืมรหัส 4 หลัก?", "Forgot your PIN?")}</summary>
+                <p>
+                  {L(
+                    "เพื่อความปลอดภัย แอปไม่ส่งรหัสทาง SMS หรืออีเมล กรุณาติดต่อผู้ดูแลระบบเพื่อรีเซ็ตรหัส แล้วกด “ใช้ครั้งแรก” เพื่อตั้งรหัสใหม่ด้วยเบอร์เดิม ข้อมูลยาเดิมจะยังอยู่",
+                    "For safety, the app does not send codes by SMS or email. Ask the app administrator to reset your PIN, then tap “First time?” to set a new PIN with the same number. Your medicine records stay.",
+                  )}
+                </p>
+              </details>
             )}
           </form>
         ) : (
@@ -2091,6 +2169,7 @@ function App() {
           </section>
           <section className="settings-group">
             <h3>{L("บัญชี", "Account")}</h3>
+            {auth && <ChangePin lang={lang} />}
             <button onClick={logout}>{t.logout}</button>
             <button
               className="danger"
@@ -2857,15 +2936,27 @@ function Caregivers({
                 ) + r.token,
               );
             } catch (e: any) {
-              setMessage(e.message);
+              setMessage(friendlyError(e, lang));
             }
           }}
         >
           <h3>{L("เชิญผู้ดูแล", "Invite a caregiver")}</h3>
           <label>
-            {L("อีเมลผู้ดูแล", "Caregiver email")}
-            <input type="email" name="email" required />
+            {L("เบอร์โทรของผู้ดูแล", "Caregiver phone number")}
+            <input
+              type="tel"
+              inputMode="tel"
+              name="email"
+              placeholder="08x-xxx-xxxx"
+              required
+            />
           </label>
+          <p className="hint">
+            {L(
+              "ผู้ดูแลต้องสมัครใช้งานด้วยเบอร์นี้ แล้วใส่รหัสเชิญ",
+              "The caregiver registers with this number, then enters the invitation code.",
+            )}
+          </p>
           <label>
             {L("สิทธิ์", "Access")}
             <select name="role">
@@ -2964,6 +3055,81 @@ function Caregivers({
         {message}
       </p>
     </>
+  );
+}
+function ChangePin({ lang }: { lang: Language }) {
+  const L = (th: string, en: string) => (lang === "th" ? th : en);
+  const [open, setOpen] = useState(false),
+    [message, setMessage] = useState(""),
+    [busy, setBusy] = useState(false);
+  if (!open)
+    return (
+      <button onClick={() => setOpen(true)}>
+        🔑 {L("เปลี่ยนรหัส 4 หลัก", "Change PIN")}
+      </button>
+    );
+  const digits = (e: React.FormEvent<HTMLInputElement>) => {
+    e.currentTarget.value = e.currentTarget.value
+      .replace(/\D/g, "")
+      .slice(0, 4);
+  };
+  const pinField = (name: string, label: string, isNew: boolean) => (
+    <label>
+      {label}
+      <input
+        name={name}
+        type="password"
+        required
+        inputMode="numeric"
+        pattern="[0-9]{4}"
+        maxLength={4}
+        autoComplete={isNew ? "new-password" : "current-password"}
+        className="code-input"
+        onInput={digits}
+      />
+    </label>
+  );
+  return (
+    <form
+      className="confirm-box"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        const form = e.currentTarget;
+        const f = new FormData(form);
+        if (f.get("newPin") !== f.get("newPin2")) {
+          setMessage(
+            L("รหัสใหม่ทั้งสองช่องไม่ตรงกัน", "The new PINs do not match"),
+          );
+          return;
+        }
+        setBusy(true);
+        try {
+          await api("/auth/pin/change", {
+            currentPin: f.get("currentPin"),
+            newPin: f.get("newPin"),
+          });
+          form.reset();
+          setMessage(L("เปลี่ยนรหัสเรียบร้อยแล้ว", "PIN changed"));
+        } catch (err: any) {
+          setMessage(friendlyError(err, lang));
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      {pinField("currentPin", L("รหัสเดิม", "Current PIN"), false)}
+      {pinField("newPin", L("รหัสใหม่ 4 หลัก", "New 4-digit PIN"), true)}
+      {pinField("newPin2", L("ใส่รหัสใหม่อีกครั้ง", "New PIN again"), true)}
+      {message && <p role="status">{message}</p>}
+      <div className="actions">
+        <button className="primary" disabled={busy}>
+          {L("บันทึกรหัสใหม่", "Save new PIN")}
+        </button>
+        <button type="button" onClick={() => setOpen(false)}>
+          {L("ปิด", "Close")}
+        </button>
+      </div>
+    </form>
   );
 }
 createRoot(document.getElementById("root")!).render(<App />);

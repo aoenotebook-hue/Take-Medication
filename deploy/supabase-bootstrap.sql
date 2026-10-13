@@ -1,4 +1,4 @@
--- Generated from db/001.sql through db/007.sql by npm run build:bootstrap.
+-- Generated from db/001.sql through db/008.sql by npm run build:bootstrap.
 -- Run in the selected Supabase project's SQL editor. No synthetic patient data is seeded.
 -- Existing numbered migrations are skipped; failures roll back the entire transaction.
 BEGIN;
@@ -94,6 +94,24 @@ BEGIN
   END LOOP;
 END $$;
 INSERT INTO schema_migrations VALUES(7);
+
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE version=8) THEN
+-- Phone number + user-chosen 4-digit PIN sign-in. Only salted scrypt hashes are stored.
+-- pin_hash NULL means an administrator reset the PIN; the owner sets a new one on next registration.
+CREATE TABLE pin_credentials(phone text PRIMARY KEY, user_id uuid UNIQUE NOT NULL, pin_hash text, failed_attempts integer NOT NULL DEFAULT 0, lock_count integer NOT NULL DEFAULT 0, locked_until timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
+ALTER TABLE pin_credentials ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE pin_credentials FROM PUBLIC;
+DO $$
+DECLARE r text;
+BEGIN
+  FOREACH r IN ARRAY ARRAY['anon','authenticated'] LOOP
+    IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname=r) THEN
+      EXECUTE format('REVOKE ALL ON TABLE public.pin_credentials FROM %I',r);
+    END IF;
+  END LOOP;
+END $$;
+INSERT INTO schema_migrations VALUES(8);
 
   END IF;
 END $medication_bootstrap$;
