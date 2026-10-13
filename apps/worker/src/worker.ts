@@ -38,7 +38,7 @@ export async function enqueueJobs() {
   return transaction(async (c) => {
     const groups = (
       await c.query(
-        "SELECT o.patient_id,o.intended_at,array_agg(o.id::text ORDER BY o.id) ids,s.id subscription_id FROM dose_occurrences o JOIN reminder_preferences p ON p.patient_id=o.patient_id AND p.enabled JOIN devices d ON d.id=p.device_id AND d.revoked_at IS NULL JOIN memberships m ON m.patient_id=o.patient_id AND m.user_id=d.user_id AND m.revoked_at IS NULL JOIN push_subscriptions s ON s.device_id=d.id AND s.disabled_at IS NULL WHERE o.valid AND o.intended_at >= now()-interval '15 minutes' GROUP BY o.patient_id,o.intended_at,s.id",
+        "SELECT o.patient_id,o.intended_at,array_agg(o.id::text ORDER BY o.id) ids,s.id subscription_id FROM dose_occurrences o JOIN reminder_preferences p ON p.patient_id=o.patient_id AND p.enabled JOIN devices d ON d.id=p.device_id AND d.revoked_at IS NULL JOIN memberships m ON m.patient_id=o.patient_id AND m.user_id=d.user_id AND m.revoked_at IS NULL JOIN push_subscriptions s ON s.device_id=d.id AND s.disabled_at IS NULL WHERE o.valid AND o.intended_at >= now()-interval '15 minutes' AND o.intended_at < now()+interval '2 minutes' GROUP BY o.patient_id,o.intended_at,s.id",
       )
     ).rows;
     for (const g of groups) {

@@ -57,6 +57,11 @@ it("unauthenticated access and cross-origin writes fail without logging health d
   expect((await request("/push/resolve/" + randomUUID())).status).toBe(403);
   expect(r.headers.get("cache-control")).toBe("no-store");
 });
+it("scheduler and retention endpoints reject ordinary signed-in users", async () => {
+  for (const path of ["/internal/reminders", "/internal/maintenance"])
+    expect((await request(path, "POST", {})).status).toBe(401);
+  expect((await request("/unknown-route")).status).toBe(404);
+});
 it("invitations are email-bound, single-use and expire", async () => {
   const r = await request("/patients/" + patient + "/invitations", "POST", {
     recipient: "demo@example.invalid",
@@ -119,6 +124,18 @@ it("photo reads require patient membership and uploads reject unsupported bodies
     { bad: "image" },
   );
   expect(r.status).toBe(422);
+  const oversized = await fetch(
+    base + "/api/patients/" + patient + "/photos?medicationId=" + med,
+    {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + token,
+        "Content-Type": "image/jpeg",
+      },
+      body: Buffer.alloc(2 * 1024 * 1024 + 1),
+    },
+  );
+  expect(oversized.status).toBe(413);
   const bytes = await sharp({
     create: { width: 40, height: 40, channels: 3, background: "#abcdef" },
   })

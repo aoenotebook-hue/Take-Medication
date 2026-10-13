@@ -70,7 +70,7 @@ export async function regenerate(c: PoolClient, patient: string, med: string) {
     if (next && DateTime.fromISO(next) <= now) continue;
     const from = now.setZone(v.data.timezone).minus({ days: 1 }).toISODate()!;
     const to = now.setZone(v.data.timezone).plus({ days: 30 }).toISODate()!;
-    for (const o of generateOccurrences(
+    const occurrences = generateOccurrences(
       patient,
       med,
       v.id,
@@ -78,20 +78,17 @@ export async function regenerate(c: PoolClient, patient: string, med: string) {
       from,
       to,
       next,
-    )) {
+    );
+    // Bounded bulk inserts avoid hundreds of database round trips from a
+    // serverless function while preserving deterministic IDs and idempotency.
+    for (let offset = 0; offset < occurrences.length; offset += 200) {
       await c.query(
-        "INSERT INTO dose_occurrences(id,patient_id,medication_id,regimen_id,slot_id,local_date,local_time,timezone,intended_at,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING",
+        "INSERT INTO dose_occurrences(id,patient_id,medication_id,regimen_id,slot_id,local_date,local_time,timezone,intended_at,data) SELECT id,$2::uuid,$3::uuid,$4::uuid,slot_id,local_date,local_time,timezone,intended_at,data FROM jsonb_to_recordset($1::jsonb) AS x(id uuid,slot_id text,local_date date,local_time text,timezone text,intended_at timestamptz,data jsonb) ON CONFLICT DO NOTHING",
         [
-          o.id,
+          JSON.stringify(occurrences.slice(offset, offset + 200)),
           patient,
           med,
           v.id,
-          o.slot_id,
-          o.local_date,
-          o.local_time,
-          o.timezone,
-          o.intended_at,
-          o.data,
         ],
       );
     }

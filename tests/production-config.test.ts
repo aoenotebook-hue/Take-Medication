@@ -49,3 +49,18 @@ it("rejects mismatched VAPID and short encryption keys", () => {
     productionConfigErrors({ ...c, PUSH_ENCRYPTION_KEY: "AA==" }),
   ).toContain("PUSH_ENCRYPTION_KEY must encode 32 bytes");
 });
+it("requires a separate strong cron secret for the Vercel runtime", () => {
+  expect(productionConfigErrors({ ...config(), VERCEL: "1" })).toContain(
+    "CRON_SECRET is missing or a placeholder",
+  );
+  expect(
+    productionConfigErrors({ ...config(), VERCEL: "1", CRON_SECRET: "short" }),
+  ).toContain("CRON_SECRET must contain at least 32 characters");
+  expect(
+    productionConfigErrors({
+      ...config(),
+      VERCEL: "1",
+      CRON_SECRET: randomBytes(32).toString("base64url"),
+    }),
+  ).toEqual([]);
+});

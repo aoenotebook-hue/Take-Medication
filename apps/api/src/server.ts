@@ -16,10 +16,23 @@ import {
 import { authenticate, demoEnabled, demoToken, supabase } from "./auth";
 import { seal } from "./secrets";
 import { validateEndpoint } from "../../worker/src/push";
+import { cronAuthorized, runReminderBatch } from "../../worker/src/serverless";
+import { PostgresRateStore } from "./rate-store";
+import { productionConfigErrors } from "../../../scripts/production-config";
+import { once } from "node:events";
+import { runRetention } from "../../worker/src/retention";
+if (process.env.VERCEL) {
+  const errors = productionConfigErrors(process.env);
+  if (errors.length)
+    throw new Error("Production configuration: " + errors.join("; "));
+}
 export const app = express();
 app.disable("x-powered-by");
 // Trust exactly one owned reverse proxy; the API container has no published port.
-app.set("trust proxy",process.env.TRUST_PROXY==="1"?1:false);
+app.set(
+  "trust proxy",
+  process.env.VERCEL || process.env.TRUST_PROXY === "1" ? 1 : false,
+);
 app.use(
   helmet({
     contentSecurityPolicy: {
@@ -44,6 +57,7 @@ app.use(
     limit: 120,
     standardHeaders: "draft-8",
     legacyHeaders: false,
+    ...(process.env.VERCEL ? { store: new PostgresRateStore("api") } : {}),
   }),
 );
 app.use(express.json({ limit: "1mb" }));
@@ -73,6 +87,20 @@ app.get("/api/health", async (_req, res) => {
     })),
     adapter: process.env.PUSH_ADAPTER || "webpush",
   });
+});
+app.post("/api/internal/reminders", async (req, res) => {
+  if (!cronAuthorized(req.headers.authorization)) {
+    res.status(401).json({ error: "Unauthorized scheduler" });
+    return;
+  }
+  res.json(await runReminderBatch());
+});
+app.post("/api/internal/maintenance", async (req, res) => {
+  if (!cronAuthorized(req.headers.authorization)) {
+    res.status(401).json({ error: "Unauthorized scheduler" });
+    return;
+  }
+  res.json(await runRetention(1));
 });
 app.post("/api/demo", async (req, res) => {
   if (
@@ -285,7 +313,13 @@ app.get("/api/push/config", (_req, res) =>
 );
 app.post(
   "/api/push/test",
-  rateLimit({ windowMs: 60000, limit: 3 }),
+  rateLimit({
+    windowMs: 60000,
+    limit: 3,
+    ...(process.env.VERCEL
+      ? { store: new PostgresRateStore("push-test") }
+      : {}),
+  }),
   async (req, res) => {
     const d = z
       .object({ deviceId: z.string().uuid(), patientId: z.string().uuid() })
@@ -461,7 +495,7 @@ app.post(
   "/api/patients/:id/photos",
   express.raw({
     type: ["image/jpeg", "image/png", "image/webp"],
-    limit: "8mb",
+    limit: "2mb",
   }),
   async (req, res) => {
     await authorize(pool, res.locals.user.id, req.params.id, "editor");
@@ -490,7 +524,10 @@ app.post(
       }
     }
     if (!Buffer.isBuffer(req.body))
-      throw new HttpError(422, "Use JPEG, PNG or WebP, at most 8 MB");
+      throw new HttpError(
+        422,
+        "Use JPEG, PNG or WebP, at most 2 MB after compression",
+      );
     let bytes: Buffer;
     try {
       bytes = await sharp(req.body, { limitInputPixels: 25000000 })
@@ -501,6 +538,8 @@ app.post(
     } catch {
       throw new HttpError(422, "Unsupported image; export photo as JPEG");
     }
+    if (bytes.length > 2 * 1024 * 1024)
+      throw new HttpError(422, "Photo is too large; choose a smaller image");
     const id = req.query.photoId
         ? z.string().uuid().parse(req.query.photoId)
         : randomUUID(),
@@ -555,7 +594,24 @@ app.post("/api/account/export", async (_req, res) => {
   const profiles = await Promise.all(
     patients.map((p) => snapshot(actor, p.patient_id)),
   );
-  const photoFiles = [];
+  // Stream individual photo records so exports do not hit Vercel's buffered
+  // response limit or accumulate all base64 files in server memory.
+  res.type("application/json");
+  const write = async (value: string) => {
+    const bytes = Buffer.from(value);
+    for (let offset = 0; offset < bytes.length; offset += 32768) {
+      if (res.destroyed) throw new Error("Export connection closed");
+      if (!res.write(bytes.subarray(offset, offset + 32768)))
+        await once(res, "drain", { signal: AbortSignal.timeout(10000) });
+    }
+  };
+  await write(
+    JSON.stringify({ generatedAt: new Date().toISOString(), profiles }).slice(
+      0,
+      -1,
+    ) + ',"photoFiles":[',
+  );
+  let first = true;
   for (const profile of profiles)
     for (const photo of profile.photos) {
       const p = (
@@ -575,15 +631,19 @@ app.post("/api/account/export", async (_req, res) => {
           throw new HttpError(503, "Private photo export failed; retry");
         bytes = Buffer.from(await data.arrayBuffer());
       }
-      photoFiles.push({
-        id: p.id,
-        patientId: p.patient_id,
-        medicationId: p.medication_id,
-        mime: p.mime,
-        base64: bytes.toString("base64"),
-      });
+      await write(
+        (first ? "" : ",") +
+          JSON.stringify({
+            id: p.id,
+            patientId: p.patient_id,
+            medicationId: p.medication_id,
+            mime: p.mime,
+            base64: bytes.toString("base64"),
+          }),
+      );
+      first = false;
     }
-  res.json({ generatedAt: new Date().toISOString(), profiles, photoFiles });
+  res.end("]}");
 });
 app.delete("/api/account", async (req, res) => {
   if (
@@ -642,6 +702,9 @@ app.delete("/api/account", async (req, res) => {
       "Tombstoned immediately; private records purged by documented retention job within 30 days; backups expire after 30 days.",
   });
 });
+app.use("/api", (_req, res) =>
+  res.status(404).json({ error: "API route not found" }),
+);
 app.use(
   express.static("dist", {
     setHeaders(res) {
@@ -659,6 +722,10 @@ app.use(
     res: express.Response,
     _next: express.NextFunction,
   ) => {
+    if (res.headersSent) {
+      res.destroy();
+      return;
+    }
     if (e instanceof z.ZodError) {
       res.status(422).json({ error: "Invalid input", fields: e.issues });
       return;
@@ -671,7 +738,7 @@ app.use(
 );
 if (process.env.NODE_ENV === "production" && process.env.LOCAL_DEMO === "true")
   throw new Error("LOCAL_DEMO forbidden in production");
-if (process.env.VITEST !== "true")
+if (process.env.VITEST !== "true" && !process.env.VERCEL)
   app.listen(Number(process.env.PORT || 3001), () =>
     console.log("API listening; sensitive request logging disabled"),
   );

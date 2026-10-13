@@ -15,6 +15,7 @@ import {
 } from "../../../packages/domain/src";
 import { db, clearPrivate, localView, type Snapshot } from "./storage";
 import { exportPdf, summaryRows, font } from "./pdf";
+import { preparePhoto } from "./photo";
 import type { Operation } from "../../api/src/service";
 registerSW({ immediate: true });
 const auth =
@@ -537,22 +538,24 @@ function App() {
             <option value="en">English</option>
           </select>
         </label>
-        <button
-          className="primary"
-          onClick={async () => {
-            try {
-              token = (await api("/demo", {})).token;
-              actor = "11111111-1111-4111-a111-111111111111";
-              sessionStorage.setItem("demo-token", token);
-              sessionStorage.setItem("actor", actor);
-              await afterLogin();
-            } catch (e: any) {
-              setMessage(e.message);
-            }
-          }}
-        >
-          {t.demo}
-        </button>
+        {!auth && (
+          <button
+            className="primary"
+            onClick={async () => {
+              try {
+                token = (await api("/demo", {})).token;
+                actor = "11111111-1111-4111-a111-111111111111";
+                sessionStorage.setItem("demo-token", token);
+                sessionStorage.setItem("actor", actor);
+                await afterLogin();
+              } catch (e: any) {
+                setMessage(e.message);
+              }
+            }}
+          >
+            {t.demo}
+          </button>
+        )}
         {auth ? (
           <form
             onSubmit={async (e) => {
@@ -1148,6 +1151,8 @@ function App() {
             regimen={current(editing.id)?.data}
             all={view.medications}
             onSave={async (m, r, file) => {
+              // Validate before any medication operations are committed locally.
+              const prepared = file ? await preparePhoto(file) : undefined;
               if (editing.conflictOpId)
                 await db.outbox.delete(editing.conflictOpId);
               let version = editing.version;
@@ -1183,7 +1188,7 @@ function App() {
                   id: crypto.randomUUID(),
                   patientId: patient,
                   medicationId: editing.id,
-                  blob: file,
+                  blob: prepared!,
                   pending: true,
                   actor,
                 });

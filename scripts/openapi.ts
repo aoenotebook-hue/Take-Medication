@@ -213,6 +213,7 @@ add(
 );
 paths["/api/patients/{id}/photos"].post.requestBody = {
   required: true,
+  description: "JPEG/PNG/WebP up to 2 MiB after client-side compression",
   content: Object.fromEntries(
     ["image/jpeg", "image/png", "image/webp"].map((t) => [
       t,
@@ -250,6 +251,19 @@ add(
   "Coarse database/worker health without patient information",
 );
 paths["/api/health"].get.security = [];
+for (const [path, summary] of [
+  [
+    "/api/internal/reminders",
+    "Protected bounded reminder batch; requires the separate scheduler secret",
+  ],
+  [
+    "/api/internal/maintenance",
+    "Protected account-retention batch; requires the separate scheduler secret",
+  ],
+]) {
+  add(path, "post", summary);
+  paths[path].post.security = [{ schedulerBearer: [] }];
+}
 add(
   "/api/push/observations",
   "post",
@@ -293,7 +307,14 @@ await writeFile(
       servers: [{ url: "http://localhost:3001" }],
       paths,
       components: {
-        securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } },
+        securitySchemes: {
+          bearerAuth: { type: "http", scheme: "bearer" },
+          schedulerBearer: {
+            type: "http",
+            scheme: "bearer",
+            description: "Backend-only CRON_SECRET, not a Supabase user token",
+          },
+        },
         schemas,
       },
     },

@@ -30,6 +30,8 @@ If Chromium is absent: `npx playwright install --with-deps chromium`. Optionally
 
 For the repository-to-container workflow, see [GitHub and container deployment](docs/github-deployment.md).
 
+For the selected Vercel and Supabase projects, see [Vercel + Supabase setup, deployment and live checks](docs/vercel-supabase.md). This option runs reminders through Supabase Cron and a bounded Vercel function.
+
 Follow [the deployment and operations runbook](docs/runbook.md) for Supabase email codes, database/storage isolation, HTTPS, VAPID, worker supervision, backups and restore. The API can serve `dist/` behind an HTTPS reverse proxy; a static frontend alone cannot schedule reminders.
 
 - [Architecture and specification adaptations](docs/architecture.md)

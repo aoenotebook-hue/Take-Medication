@@ -1,6 +1,6 @@
 # Verification record
 
-Executed in the development workspace on **12 October 2026 (Asia/Bangkok)** using Node 24, PostgreSQL 17 in a local Docker container, and installed Linux Chromium. Synthetic records only. This is an implementation verification record, not a clinical or production certification.
+Latest application/hosting regression run: **13 October 2026 (UTC)** using Node 24, PostgreSQL 17 in an isolated local Docker container, and installed Linux Chromium. The backup/PDF visual drills below were performed on 12 October. Synthetic records only. This is an implementation verification record, not a clinical or production certification.
 
 ## Automated results
 
@@ -8,9 +8,10 @@ Final commands and counts are recorded below after the final regression run. Tes
 
 - `npm run migrate`: transactional numbered migrations applied successfully; repeated invocation is safe.
 - `npm run typecheck`: TypeScript check passed.
-- `npm test`: **34 tests passed** (recurrence/quantities/status, real PostgreSQL transactions/worker/authorization, HTTP security and 1/10/30-medicine Thai PDFs).
+- `npm test`: **45 tests passed** (recurrence/quantities/status, real PostgreSQL transactions/worker/authorization, HTTP security, bounded serverless horizon/lease recovery, distributed rate counters, RLS browser isolation and 1/10/30-medicine Thai PDFs).
 - `npm run build`: installable build and service-worker precache generated. Vite reports large PDF/application chunks; they are included in the offline cache.
-- `npm run test:browser`: **2 tests passed** (Thai navigation/axe, cached offline cold-open, sign-out cache purge, guided manual entry, offline mutation replay, offline PDF download, 200% layout).
+- `npm run test:browser`: **3 tests passed** (Thai navigation/axe, cached offline cold-open, sign-out cache purge, guided manual entry, offline mutation replay, large-photo offline compression/upload, offline PDF download, 200% layout).
+- Vercel build guard rejected a synthetic private frontend key. Hosting provisioning stopped before network writes because `VERCEL_TOKEN`, `SUPABASE_ACCESS_TOKEN` and `DATABASE_URL` were absent. Provider setup/deployment scripts are prepared; their remote execution and live checks remain unrun.
 - `npx tsx scripts/restore-drill.ts`: encrypted custom-format PostgreSQL backup restored into a temporary isolated database; medication, dose-event, membership, audit and photo counts matched. The temporary restore database was removed.
 - Official MDN source documentation was read for Push API and notification-click lifetime/routing behavior. The OFL Thai font license is bundled.
 

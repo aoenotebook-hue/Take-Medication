@@ -14,6 +14,7 @@ export function productionConfigErrors(
     "VAPID_SUBJECT",
     "PUSH_ENCRYPTION_KEY",
   ];
+  if (env.VERCEL) required.push("CRON_SECRET");
   for (const name of required) {
     const value = env[name];
     if (
@@ -28,6 +29,8 @@ export function productionConfigErrors(
     errors.push("LOCAL_DEMO is forbidden in production");
   if (env.PUSH_ADAPTER === "simulated")
     errors.push("PUSH_ADAPTER must be webpush in production");
+  if (env.VERCEL && env.CRON_SECRET && env.CRON_SECRET.length < 32)
+    errors.push("CRON_SECRET must contain at least 32 characters");
   for (const name of ["PUBLIC_APP_URL", "SUPABASE_URL"])
     if (env[name]) {
       try {

@@ -1096,6 +1096,7 @@
         ],
         "requestBody": {
           "required": true,
+          "description": "JPEG/PNG/WebP up to 2 MiB after client-side compression",
           "content": {
             "image/jpeg": {
               "schema": {
@@ -1221,6 +1222,86 @@
       "get": {
         "summary": "Coarse database/worker health without patient information",
         "security": [],
+        "responses": {
+          "200": {
+            "description": "Authorized response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sign in required"
+          },
+          "403": {
+            "description": "Patient or device access denied"
+          },
+          "409": {
+            "description": "Optimistic concurrency conflict; authorized current version returned"
+          },
+          "422": {
+            "description": "Field validation failed"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Integration unavailable"
+          }
+        }
+      }
+    },
+    "/api/internal/reminders": {
+      "post": {
+        "summary": "Protected bounded reminder batch; requires the separate scheduler secret",
+        "security": [
+          {
+            "schedulerBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sign in required"
+          },
+          "403": {
+            "description": "Patient or device access denied"
+          },
+          "409": {
+            "description": "Optimistic concurrency conflict; authorized current version returned"
+          },
+          "422": {
+            "description": "Field validation failed"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Integration unavailable"
+          }
+        }
+      }
+    },
+    "/api/internal/maintenance": {
+      "post": {
+        "summary": "Protected account-retention batch; requires the separate scheduler secret",
+        "security": [
+          {
+            "schedulerBearer": []
+          }
+        ],
         "responses": {
           "200": {
             "description": "Authorized response",
@@ -1381,6 +1462,11 @@
       "bearerAuth": {
         "type": "http",
         "scheme": "bearer"
+      },
+      "schedulerBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Backend-only CRON_SECRET, not a Supabase user token"
       }
     },
     "schemas": {
