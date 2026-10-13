@@ -7,7 +7,22 @@ import { SUPABASE_ROOT_CA } from "./supabase-ca.js";
 // schedule's timezone. pg's default turns them into Date objects at server-local
 // midnight, which serialize as timestamps and never equal "YYYY-MM-DD" in the app.
 pg.types.setTypeParser(pg.types.builtins.DATE, (value) => value);
+// Supabase direct hosts (db.<ref>.supabase.co) are IPv6-only and do not resolve
+// from Vercel functions (ENOTFOUND). There, use the IPv4 pooler URL that the
+// Supabase-Vercel integration maintains instead. A pooler DATABASE_URL still wins.
+const directSupabaseHost = (url = "") => {
+  try {
+    return /^db\.[a-z0-9]+\.supabase\.co$/.test(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+};
 const connectionString =
+  (process.env.VERCEL &&
+    process.env.POSTGRES_URL &&
+    (!process.env.DATABASE_URL ||
+      directSupabaseHost(process.env.DATABASE_URL)) &&
+    process.env.POSTGRES_URL) ||
   process.env.DATABASE_URL ||
   "postgres://medication:local-only@localhost:5432/medication";
 // Do not let URL sslmode options disable certificate verification in production.
