@@ -220,7 +220,7 @@ test("one-page entry fills chips from label wording and saves an active medicine
   ).toBeVisible();
   await expect(card.getByText(/กลางวัน 12:00/)).toBeVisible();
 });
-test("delete a mistaken medicine, daily schedule view, and start over", async ({
+test("row edit and delete buttons, daily schedule view, and clear all data", async ({
   page,
 }) => {
   page.on("dialog", (d) => d.accept());
@@ -257,17 +257,23 @@ test("delete a mistaken medicine, daily schedule view, and start over", async ({
   await page.getByRole("button", { name: "ตามยา", exact: true }).click();
   // Delete the one added by mistake.
   await page
-    .getByRole("button", { name: "เปิดข้อมูลยา Synthetic mistake " + stamp })
+    .getByRole("button", { name: "ลบ Synthetic mistake " + stamp })
     .click();
-  await page.getByRole("button", { name: /ลบ \(เพิ่มผิด/ }).click();
   const rowOf = (text: string) => page.locator(".med-row", { hasText: text });
   await expect(rowOf("Synthetic mistake " + stamp)).toHaveCount(0);
   await expect(rowOf("Synthetic keep " + stamp)).toBeVisible();
-  // Start over removes every medicine but keeps the profile.
-  await page.getByRole("button", { name: "การตั้งค่า", exact: true }).click();
+  // The edit button on the row opens the filled form directly.
   await page
-    .getByRole("button", { name: /ลบรายการยาทั้งหมดและเริ่มใหม่/ })
+    .getByRole("button", { name: "แก้ไข Synthetic keep " + stamp })
     .click();
+  await expect(
+    page.getByRole("dialog").getByLabel("ชื่อยา", { exact: true }),
+  ).toHaveValue("Synthetic keep " + stamp);
+  await page.getByRole("button", { name: "ปิด", exact: true }).click();
+  // Clear all data removes everything but keeps the profile name and sign-in.
+  await page.getByRole("button", { name: "การตั้งค่า", exact: true }).click();
+  await page.getByRole("button", { name: /ล้างข้อมูลทั้งหมด/ }).click();
+  await expect(page.getByText(/ล้างข้อมูลทั้งหมดแล้ว/)).toBeVisible();
   await expect(rowOf("Synthetic keep " + stamp)).toHaveCount(0);
   await expect(page.getByText("ยังไม่มีรายการยา").first()).toBeVisible();
   await expect(

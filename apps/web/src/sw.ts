@@ -35,12 +35,14 @@ self.addEventListener("push", (e) => {
         !Number.isFinite(Date.parse(p.expiresAt)) ||
         Date.parse(p.expiresAt) < Date.now();
       await self.registration.showNotification(
-        stale || p.title !== "แจ้งเตือนยา"
-          ? "Medication reminder"
-          : "แจ้งเตือนยา",
+        stale
+          ? "แจ้งเตือนยา / Medication reminder"
+          : p.title !== "แจ้งเตือนยา"
+            ? "Medication reminder"
+            : "แจ้งเตือนยา",
         {
           body: stale
-            ? "Open to review your current medication schedule"
+            ? "เปิดแอปเพื่อตรวจสอบรายการยาปัจจุบัน / Open to review your current medicines"
             : p.title === "แจ้งเตือนยา"
               ? "เปิดแอปเพื่อตรวจสอบรายการยา"
               : "Open to review your current medication schedule",

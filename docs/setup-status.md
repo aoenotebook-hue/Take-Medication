@@ -35,6 +35,16 @@ makes every existing PIN stop working.
 Because every sign-in goes through the Vercel server, raise Supabase → Authentication →
 Rate Limits → "sign-ups and sign-ins" if many people sign in at the same time.
 
+**Security setting — do this once:** Supabase → Authentication → Sign In / Providers →
+turn **off** "Allow new users to sign up" (keep the Email provider itself enabled). The app
+creates accounts through its own server, so this does not affect registration. The API already
+refuses any account that is not a phone + PIN account, and registration removes look-alike
+accounts created directly with the public key; this setting also stops them being created.
+
+**Clear all data** (Settings → ล้างข้อมูลทั้งหมด, owner only) permanently removes the patient's
+medicines, dose history, allergies, photos and caregiver access, and starts an empty profile
+with the same name. The phone number and PIN keep working.
+
 **Unlock a number** (Supabase → SQL Editor):
 
 ```sql

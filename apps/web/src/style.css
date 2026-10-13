@@ -759,12 +759,22 @@ button.danger {
 .med-row-main strong {
   font-size: 1.1rem;
 }
-.edit-btn {
-  border: 0;
+.row-actions {
+  display: flex;
+  flex-direction: column;
   border-left: 1px solid #cfdbd3;
+}
+.edit-btn {
+  flex: 1;
+  border: 0;
   border-radius: 0;
-  min-width: 5rem;
+  min-width: 5.2rem;
+  min-height: 48px;
   font-weight: 600;
+}
+.delete-btn {
+  border-top: 1px solid #cfdbd3;
+  color: #8f1d12;
 }
 .badge.status-paused,
 .badge.status-draft {

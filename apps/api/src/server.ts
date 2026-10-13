@@ -31,7 +31,7 @@ import {
 } from "./pin-auth.js";
 import { productionConfigErrors } from "../../../scripts/production-config.js";
 import { once } from "node:events";
-import { runRetention } from "../../worker/src/retention.js";
+import { purgePatient, runRetention } from "../../worker/src/retention.js";
 if (process.env.VERCEL) {
   const errors = productionConfigErrors(process.env);
   if (errors.length)
@@ -161,15 +161,57 @@ app.post("/api/auth/pin/register", pinLimiter, async (req, res) => {
     throw new HttpError(409, "This phone number is already registered");
   let userId: string | undefined = existing?.user_id;
   if (!userId) {
-    const { data } = await supabase().auth.admin.createUser({
-      email: phoneEmail(phone),
-      password: providerPassword(phone),
-      email_confirm: true,
-      user_metadata: { phone },
-    });
-    // An interrupted earlier registration may already have created the account.
-    userId = data?.user?.id || (await issueSession(phone)).user_id;
+    const create = () =>
+      supabase().auth.admin.createUser({
+        email: phoneEmail(phone),
+        password: providerPassword(phone),
+        email_confirm: true,
+        user_metadata: { phone },
+      });
+    const { data } = await create();
+    userId = data?.user?.id;
+    if (!userId) {
+      try {
+        // An interrupted earlier registration already created our account.
+        userId = (await issueSession(phone)).user_id;
+      } catch {
+        // Someone created this address directly with the public key. It was
+        // never bound to a PIN, so remove it (ending its sessions) and recreate.
+        const squatter = (
+          await pool
+            .query("SELECT id FROM auth.users WHERE lower(email)=lower($1)", [
+              phoneEmail(phone),
+            ])
+            .catch(() => ({ rows: [] as any[] }))
+        ).rows[0]?.id;
+        const bound =
+          squatter &&
+          (
+            await pool.query(
+              "SELECT 1 FROM pin_credentials WHERE user_id=$1 UNION ALL SELECT 1 FROM account_deletions WHERE user_id=$1",
+              [squatter],
+            )
+          ).rowCount;
+        if (!squatter || bound)
+          throw new HttpError(503, "Sign-in service unavailable; try again");
+        await supabase().auth.admin.deleteUser(squatter);
+        userId = (await create()).data?.user?.id;
+        if (!userId)
+          throw new HttpError(503, "Sign-in service unavailable; try again");
+      }
+    }
   }
+  if (
+    (
+      await pool.query("SELECT 1 FROM account_deletions WHERE user_id=$1", [
+        userId,
+      ])
+    ).rowCount
+  )
+    throw new HttpError(
+      409,
+      "This number's old account is still being deleted; try again later",
+    );
   const saved = await pool.query(
     "INSERT INTO pin_credentials(phone,user_id,pin_hash) VALUES($1,$2,$3) ON CONFLICT(phone) DO UPDATE SET pin_hash=excluded.pin_hash,failed_attempts=0,lock_count=0,locked_until=NULL,updated_at=now() WHERE pin_credentials.pin_hash IS NULL",
     [phone, userId, await hashPin(phone, pin)],
@@ -188,10 +230,23 @@ app.post("/api/auth/pin/login", pinLimiter, async (req, res) => {
 });
 app.use("/api", async (req, res, next) => {
   try {
-    const user = await authenticate(
-      req.headers.authorization?.replace(/^Bearer /, "") || "",
-    );
+    const token = req.headers.authorization?.replace(/^Bearer /, "") || "";
+    const user = await authenticate(token);
+    // Only phone + PIN accounts may use the API. The public Supabase key could
+    // otherwise create accounts directly and bypass PIN lockout; an
+    // administrator PIN reset (pin_hash NULL) also ends existing sessions.
+    if (
+      !demoEnabled() &&
+      !(
+        await pool.query(
+          "SELECT 1 FROM pin_credentials WHERE user_id=$1 AND pin_hash IS NOT NULL",
+          [user.id],
+        )
+      ).rowCount
+    )
+      throw new HttpError(401, "Sign in required");
     res.locals.user = user;
+    res.locals.token = token;
     await pool.query(
       "INSERT INTO users(id) VALUES($1) ON CONFLICT DO NOTHING",
       [user.id],
@@ -465,6 +520,11 @@ app.post("/api/auth/pin/change", pinLimiter, async (req, res) => {
     "UPDATE pin_credentials SET pin_hash=$2,updated_at=now() WHERE phone=$1",
     [result.phone, await hashPin(result.phone, newPin)],
   );
+  // Someone who knew the old PIN loses their other signed-in sessions.
+  if (!demoEnabled())
+    await supabase()
+      .auth.admin.signOut(res.locals.token, "others")
+      .catch(() => {});
   res.json({ changed: true });
 });
 app.post("/api/patients/:id/invitations", async (req, res) => {
@@ -842,19 +902,56 @@ app.delete("/api/patients/:id/medications/:medicationId", async (req, res) => {
   });
   res.json({ removed });
 });
-app.post("/api/patients/:id/reset", async (req, res) => {
-  z.object({ confirm: z.literal("RESET") }).parse(req.body);
-  const removed = await transaction(async (c) => {
-    await authorize(c, res.locals.user.id, req.params.id, "owner");
-    const ids = (
-      await c.query(
-        "SELECT id FROM medications WHERE patient_id=$1 AND deleted_at IS NULL FOR UPDATE",
-        [req.params.id],
-      )
-    ).rows.map((r) => r.id);
-    return removeMedicines(c, res.locals.user.id, req.params.id, ids);
+// Clear all data: retire the profile and start an empty one under the same
+// name. Medicines, dose history, allergies, photos and caregiver access go;
+// the sign-in stays. Old records are purged now (retention retries failures).
+app.post("/api/patients/:id/clear", async (req, res) => {
+  z.object({ confirm: z.literal("CLEAR") }).parse(req.body);
+  const actor = res.locals.user.id;
+  const fresh = await transaction(async (c) => {
+    await authorize(c, actor, req.params.id, "owner");
+    const old = (
+      await c.query("SELECT data FROM patients WHERE id=$1 FOR UPDATE", [
+        req.params.id,
+      ])
+    ).rows[0];
+    await c.query("UPDATE patients SET deleted_at=now() WHERE id=$1", [
+      req.params.id,
+    ]);
+    await c.query(
+      "UPDATE memberships SET revoked_at=now() WHERE patient_id=$1 AND revoked_at IS NULL",
+      [req.params.id],
+    );
+    await c.query(
+      "UPDATE reminder_jobs SET state='cancelled' WHERE patient_id=$1 AND state IN ('queued','leased')",
+      [req.params.id],
+    );
+    const id = randomUUID();
+    await c.query("INSERT INTO patients(id,owner_id,data) VALUES($1,$2,$3)", [
+      id,
+      actor,
+      {
+        displayName: old.data.displayName,
+        language: old.data.language || "th",
+        timezone: old.data.timezone || "Asia/Bangkok",
+        allergyStatus: "unknown",
+        allergies: [],
+      },
+    ]);
+    await c.query("INSERT INTO memberships VALUES($1,$2,'owner',NULL)", [
+      id,
+      actor,
+    ]);
+    await audit(c, actor, id, "profile-cleared", id);
+    return id;
   });
-  res.json({ removed });
+  let purged = true;
+  try {
+    await purgePatient(req.params.id);
+  } catch {
+    purged = false;
+  }
+  res.json({ id: fresh, purged });
 });
 app.use("/api", (_req, res) =>
   res.status(404).json({ error: "API route not found" }),
