@@ -27,8 +27,8 @@ is sent, so no SMTP or email template setup is needed. The server stores only sa
 hashes and locks a number for 15 minutes after 5 wrong PINs; each repeat lockout doubles the
 wait, up to 24 hours. Logins are also limited to 20 attempts per 15 minutes per connection.
 
-Optional: in Vercel add a `PIN_AUTH_SECRET` environment variable (a long random string) *before
-anyone registers*. Without it, a key derived from `PUSH_ENCRYPTION_KEY` is used. Adding, changing
+Optional: in Vercel add a `PIN_AUTH_SECRET` environment variable (a long random string) _before
+anyone registers_. Without it, a key derived from `PUSH_ENCRYPTION_KEY` is used. Adding, changing
 or removing `PIN_AUTH_SECRET`, or changing `PUSH_ENCRYPTION_KEY`, after people have registered
 makes every existing PIN stop working.
 
@@ -51,12 +51,21 @@ with the same name. The phone number and PIN keep working.
 update pin_credentials set failed_attempts = 0, locked_until = null where phone = '+66812345678';
 ```
 
-**Forgotten PIN.** Check the person's identity first, then run the following. They tap
-"ใช้ครั้งแรก? สมัครด้วยเบอร์โทร" and set a new PIN with the same number; their medicine
-records stay.
+**Forgotten PIN.** Check the person's identity first (in person or by a call you trust), then
+run the following, with their number in the last line. It shows a one-time **reset code**:
+give it to the person privately. They tap "ใช้ครั้งแรก? สมัครด้วยเบอร์โทร", enter the same
+number and a new PIN; the app then asks for the reset code. Their medicine records stay.
+The code works for 24 hours and is cancelled after 5 wrong tries. Running this also signs
+the number out on every phone. Without the code nobody can take over the account, even
+if they know the number.
 
 ```sql
-update pin_credentials set pin_hash = null, failed_attempts = 0, locked_until = null where phone = '+66812345678';
+with c as (select upper(substr(md5(gen_random_uuid()::text), 1, 8)) as code)
+update pin_credentials
+set pin_hash = 'reset:' || encode(sha256(convert_to((select code from c), 'UTF8')), 'hex'),
+    failed_attempts = 0, locked_until = null, updated_at = now()
+where phone = '+66812345678'
+returning (select code from c) as reset_code;
 ```
 
 Phone numbers are stored in international form: 081-234-5678 becomes `+66812345678`.

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 import { pool } from "../db/client";
+import { createHash } from "node:crypto";
 import { hashPin, providerPassword } from "../apps/api/src/pin-auth";
 
 // A fake Supabase whose account for the phone was deleted in the dashboard.
@@ -92,4 +93,35 @@ it("wrong PIN never touches the provider account", async () => {
   calls.length = 0;
   expect((await login("1111")).status).toBe(401);
   expect(calls).toEqual([]);
+});
+
+const register = (pin: string, resetCode?: string) =>
+  fetch(base + "/api/auth/pin/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ phone, pin, resetCode }),
+  });
+it("after an administrator reset only the holder of the reset code can set a new PIN", async () => {
+  const code = "A1B2C3D4";
+  await pool.query(
+    "UPDATE pin_credentials SET pin_hash=$2,updated_at=now() WHERE phone=$1",
+    [phone, "reset:" + createHash("sha256").update(code).digest("hex")],
+  );
+  // The old PIN no longer works and the number cannot simply be re-registered.
+  expect((await login("2580")).status).toBe(401);
+  const without = await register("3691");
+  expect(without.status).toBe(401);
+  expect((await without.json()).current).toEqual({ resetCodeRequired: true });
+  expect((await register("3691", "WRONG123")).status).toBe(401);
+  const ok = await register("3691", code.toLowerCase());
+  expect(ok.status).toBe(200);
+  expect((await ok.json()).user_id).toBe(userId);
+  expect((await login("3691")).status).toBe(200);
+  // A reset done the old way (no code) never lets a stranger in.
+  await pool.query("UPDATE pin_credentials SET pin_hash=NULL WHERE phone=$1", [
+    phone,
+  ]);
+  const legacy = await register("4826");
+  expect(legacy.status).toBe(409);
+  expect((await legacy.json()).current).toEqual({ resetCodeRequired: true });
 });

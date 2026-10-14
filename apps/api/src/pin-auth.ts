@@ -134,7 +134,8 @@ export async function verifyPinAttempt(
       ["phone" in where ? where.phone : where.userId],
     )
   ).rows[0];
-  if (!row || !row.pin_hash) {
+  // No PIN yet, or an administrator reset is pending ("reset:…").
+  if (!row || !String(row.pin_hash || "").startsWith("scrypt$")) {
     // Same cost as a real check so timing does not reveal registered numbers.
     await hashPin("+0", "0000");
     return { error: new HttpError(401, "Wrong phone number or PIN") };

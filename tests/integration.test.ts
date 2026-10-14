@@ -271,6 +271,13 @@ describe("PostgreSQL authorization and transactions", () => {
         op("dose", future.id, 0, { ...event, occurrenceId: future.id }),
       ),
     ).rejects.toMatchObject({ status: 422 });
+    // A dose that is not due yet cannot be snoozed (no reminder floods).
+    await expect(
+      applyOperation(
+        owner,
+        op("snooze", future.id, 0, { occurrenceId: future.id, minutes: 10 }),
+      ),
+    ).rejects.toMatchObject({ status: 422 });
     // "Remind me later" must stay inside the window after the dose time.
     process.env.SNOOZE_WINDOW_MINUTES = "1";
     await expect(

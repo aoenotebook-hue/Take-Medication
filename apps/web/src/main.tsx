@@ -304,6 +304,8 @@ function App() {
     [email, setEmail] = useState(""),
     [code, setCode] = useState(""),
     [registering, setRegistering] = useState(false),
+    [needReset, setNeedReset] = useState(false),
+    [resetCode, setResetCode] = useState(""),
     [pin2, setPin2] = useState(""),
     [seen, setSeen] = useState(false),
     [registered, setRegistered] = useState(false),
@@ -961,10 +963,13 @@ function App() {
         if (r.occurrenceIds?.length)
           openAlert(r.occurrenceIds, { snooze: r.snooze, action: n.action });
       })
-      .catch(() => {
-        // Offline: answer the latest due reminder saved on this phone.
+      .catch((e) => {
+        // A reminder that is not this account's (for example a link someone
+        // sent) does nothing. Only when the phone is offline show the latest
+        // due doses, and never answer for the user without a tap.
+        if (e?.status) return;
         const ids = dueGroup();
-        if (ids.length) openAlert(ids, { action: n.action });
+        if (ids.length) openAlert(ids);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noticeTick, Boolean(view), patient]);
@@ -1214,7 +1219,9 @@ function App() {
               try {
                 const r = await api(
                   registering ? "/auth/pin/register" : "/auth/pin/login",
-                  { phone: email, pin: code },
+                  registering && needReset
+                    ? { phone: email, pin: code, resetCode }
+                    : { phone: email, pin: code },
                 );
                 const { error } = await auth.auth.setSession({
                   access_token: r.access_token,
@@ -1228,7 +1235,15 @@ function App() {
                 setMessage("");
                 await afterLogin();
               } catch (e: any) {
-                setMessage(friendlyError(e, lang));
+                if (e.current?.resetCodeRequired) setNeedReset(true);
+                setMessage(
+                  e.current?.resetCodeRequired
+                    ? L(
+                        "เบอร์นี้มีบัญชีอยู่แล้ว กรุณาใส่รหัสรีเซ็ตที่ได้รับจากผู้ดูแลระบบ (ถ้าใส่ผิด 5 ครั้งหรือเกิน 24 ชั่วโมง ต้องขอรหัสใหม่)",
+                        "This number already has an account. Enter the reset code from the administrator (after 5 wrong tries or 24 hours, ask for a new code).",
+                      )
+                    : friendlyError(e, lang),
+                );
               } finally {
                 setBusy(false);
               }
@@ -1272,6 +1287,24 @@ function App() {
                     "Keep it somewhere safe. Avoid 1234, 0000 or digits in a row.",
                   )}
                 </p>
+                {needReset && (
+                  <label>
+                    {L(
+                      "รหัสรีเซ็ตจากผู้ดูแลระบบ",
+                      "Reset code from the administrator",
+                    )}
+                    <input
+                      name="resetCode"
+                      required
+                      autoComplete="one-time-code"
+                      autoCapitalize="characters"
+                      value={resetCode}
+                      onChange={(e) =>
+                        setResetCode(e.target.value.trim().toUpperCase())
+                      }
+                    />
+                  </label>
+                )}
               </>
             )}
             <button className="primary" disabled={busy}>

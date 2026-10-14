@@ -383,6 +383,9 @@ export async function applyOperation(actor: string, input: unknown) {
         projectDose(events).status !== "unconfirmed"
       )
         throw new HttpError(409, "Snooze unavailable");
+      // Only a dose that is due (reminders may come 2 minutes early).
+      if (o.intended_at.getTime() > Date.now() + 120000)
+        throw new HttpError(422, "Dose is not due yet");
       // A snoozed reminder may repeat until the snooze window after the dose
       // time ends; each repeat stays deliverable for the usual freshness time.
       const due = new Date(Date.now() + d.minutes * 60000);
