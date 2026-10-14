@@ -15,8 +15,8 @@ export default defineConfig({
         globPatterns: ["**/*.{js,css,html,png,svg,woff,woff2,ttf,webmanifest}"],
       },
       manifest: {
-        name: "Medication Companion · เพื่อนเรื่องยา",
-        short_name: "เพื่อนเรื่องยา",
+        name: "ยาของฉัน · My Medicine",
+        short_name: "ยาของฉัน",
         lang: "th",
         start_url: "/",
         display: "standalone",

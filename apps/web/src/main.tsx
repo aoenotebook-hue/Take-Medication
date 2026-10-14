@@ -37,8 +37,10 @@ import {
   commonMedicines,
   foodOptions,
   formForUnit,
+  mealIcons,
   mealNames,
   mealOf,
+  periodOf,
   mealTime,
   MEALS,
   readLabel,
@@ -275,7 +277,6 @@ function App() {
     [localPhotos, setLocalPhotos] = useState<any[]>([]),
     [message, setMessage] = useState(""),
     [reachable, setReachable] = useState(false),
-    [settings, setSettings] = useState(false),
     [editing, setEditing] = useState<any>(),
     [detail, setDetail] = useState<any>(),
     [filter, setFilter] = useState("active"),
@@ -293,6 +294,9 @@ function App() {
         : "unsupported",
     ),
     [large, setLarge] = useState(localStorage.getItem("large-text") === "1"),
+    [hideNames, setHideNamesState] = useState(
+      localStorage.getItem("hide-notification-names") === "1",
+    ),
     [profileEdit, setProfileEdit] = useState(false),
     [caregiver, setCaregiver] = useState(false),
     [history, setHistory] = useState(false),
@@ -317,6 +321,18 @@ function App() {
     setTodayViewState(mode);
     localStorage.setItem("today-view", mode);
   };
+  // The service worker reads this flag when a reminder arrives.
+  async function setHideNames(hide: boolean) {
+    setHideNamesState(hide);
+    localStorage.setItem("hide-notification-names", hide ? "1" : "0");
+    try {
+      const c = await caches.open("prefs");
+      if (hide) await c.put("/__prefs/hide-names", new Response("1"));
+      else await c.delete("/__prefs/hide-names");
+    } catch {
+      /* no Cache Storage: reminders keep the default */
+    }
+  }
   const syncing = useRef(false);
   const patientRef = useRef(patient);
   patientRef.current = patient;
@@ -337,6 +353,11 @@ function App() {
         Date.parse(o.intended_at) + freshness * 1000,
     );
   const syncAgain = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    if (tab === "settings" && token) reconcile().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
   useEffect(() => {
     document.documentElement.lang = lang;
     document.documentElement.style.fontSize = large ? "24px" : "20px";
@@ -461,7 +482,7 @@ function App() {
           deviceId,
           kind: "opened",
         }).catch(() => {});
-        window.history.replaceState(null, "", "/");
+        window.history.replaceState(window.history.state, "", "/");
       }
       setPending(
         await db.outbox
@@ -888,7 +909,7 @@ function App() {
       if (result !== "granted")
         throw new Error(
           L(
-            "ไม่ได้รับอนุญาต เปิดได้ที่ การตั้งค่า → การแจ้งเตือน → เพื่อนเรื่องยา บน iPhone",
+            "ไม่ได้รับอนุญาต เปิดได้ที่ การตั้งค่า → การแจ้งเตือน → ยาของฉัน บน iPhone",
             "Permission denied. Turn it on in iPhone Settings → Notifications → this app.",
           ),
         );
@@ -933,20 +954,34 @@ function App() {
       setMessage(friendlyError(e, lang));
     }
   }
+  function chooseLanguage(next: Language) {
+    localStorage.setItem("language-chosen", "1");
+    setLang(next);
+    const v = s;
+    if (v && v.role === "owner" && v.profile.data.language !== next)
+      queue("profile", patient, v.profile.version, {
+        ...v.profile.data,
+        language: next,
+      }).catch(() => {});
+  }
   const languagePicker = (
-    <label>
-      {t.language}
-      <select
-        value={lang}
-        onChange={(e) => {
-          localStorage.setItem("language-chosen", "1");
-          setLang(e.target.value as Language);
-        }}
-      >
-        <option value="th">ไทย</option>
-        <option value="en">English</option>
-      </select>
-    </label>
+    <div className="lang-toggle" role="group" aria-label={t.language}>
+      {(
+        [
+          ["th", "ไทย"],
+          ["en", "EN"],
+        ] as const
+      ).map(([code, label]) => (
+        <button
+          key={code}
+          lang={code}
+          aria-pressed={lang === code}
+          onClick={() => chooseLanguage(code)}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
   );
   const pinInput = (name: string, label: string, isNew: boolean) => (
     <label>
@@ -973,17 +1008,17 @@ function App() {
   if (!signed)
     return (
       <main className="welcome">
+        <div className="welcome-top">{languagePicker}</div>
         <div className="brand-mark" aria-hidden>
           ＋
         </div>
-        <h1>เพื่อนเรื่องยา</h1>
+        <h1>{L("ยาของฉัน", "My Medicine")}</h1>
         <p className="lead">
           {L(
             "ช่วยจำเวลาใช้ยา เก็บรายการยา และแสดงให้แพทย์ดูได้ง่าย",
             "Remember medicine times, keep your medicine list, and show it to your doctor.",
           )}
         </p>
-        {languagePicker}
         {!auth && (
           <button
             className="primary"
@@ -1139,6 +1174,7 @@ function App() {
   if (needsProfile)
     return (
       <main className="welcome">
+        <div className="welcome-top">{languagePicker}</div>
         <h1>{t.firstProfile}</h1>
         <p>{t.firstProfileHelp}</p>
         <form
@@ -1234,18 +1270,25 @@ function App() {
   return (
     <>
       <header>
-        <a className="brand" href="#" onClick={(e) => e.preventDefault()}>
-          ＋ เพื่อนเรื่องยา
-        </a>
-        <button
-          onClick={() => {
-            setSettings(true);
-            reconcile();
+        <a
+          className="brand"
+          href="#"
+          onClick={(e) => {
+            e.preventDefault();
+            setTab("today");
           }}
-          aria-label={t.settings}
         >
-          ☰ {t.settings}
-        </button>
+          <span aria-hidden>💊</span> {L("ยาของฉัน", "My Medicine")}
+        </a>
+        {(pending.length > 0 || !reachable) && (
+          <button
+            className={"sync-chip " + (pending.length ? "pending" : "off")}
+            onClick={() => setTab("settings")}
+          >
+            {pending.length ? "⏳ " + t.pending : "⚠ " + t.offline}
+          </button>
+        )}
+        {languagePicker}
       </header>
       <main>
         <section className="identity">
@@ -1289,20 +1332,6 @@ function App() {
               </p>
             )}
         </section>
-        <div
-          className={
-            "sync " + (pending.length ? "pending" : reachable ? "ok" : "off")
-          }
-          role="status"
-        >
-          <span>
-            <span aria-hidden>
-              {pending.length ? "⏳ " : reachable ? "✓ " : "⚠ "}
-            </span>
-            {pending.length ? t.pending : reachable ? t.synced : t.offline}
-          </span>
-          <button onClick={() => sync()}>{t.sync}</button>
-        </div>
         {view && tab === "today" && <InstallGuide lang={lang} />}
         {view?.scheduleIssues?.map((issue) => (
           <p key={issue.medication_id} className="warning">
@@ -1421,22 +1450,29 @@ function App() {
                 <div
                   key={o.id}
                   className={
-                    "dose-row status-" + p.status + (late ? " late" : "")
+                    "dose-row status-" +
+                    p.status +
+                    " period-" +
+                    periodOf(o.local_time) +
+                    (late ? " late" : "")
                   }
                 >
                   <div className="dose-main">
                     {mode === "medicine" && (
-                      <span className="dose-time">{o.local_time}</span>
+                      <Period time={o.local_time} lang={lang} showTime />
                     )}
                     <div className="dose-text">
                       {mode === "time" && (
-                        <button
-                          className="name-link"
-                          onClick={() => setDetail(m)}
-                        >
-                          {m.data.name}
-                          {m.data.strength ? " " + m.data.strength : ""}
-                        </button>
+                        <span className="dose-name">
+                          <button
+                            className="name-link"
+                            onClick={() => setDetail(m)}
+                          >
+                            {m.data.name}
+                            {m.data.strength ? " " + m.data.strength : ""}
+                          </button>
+                          <Speak text={m.data.name} lang={lang} />
+                        </span>
                       )}
                       <span className="dose-what">
                         {o.data.amount} {o.data.unit}
@@ -1562,7 +1598,9 @@ function App() {
                   numeric: true,
                 }),
               );
-            const times = [...new Set(todays.map((o) => o.local_time))];
+            const periods = MEALS.filter((p) =>
+              todays.some((o) => periodOf(o.local_time) === p),
+            );
             const prn = view.medications.filter(
               (m) => current(m.id)?.data.status === "as-needed",
             );
@@ -1580,7 +1618,11 @@ function App() {
                       <>
                         <span>{t.nextDose}</span>
                         <strong className="next-time">
-                          {nextGroup[0].local_time}
+                          <span aria-hidden>
+                            {mealIcons[periodOf(nextGroup[0].local_time)]}{" "}
+                          </span>
+                          {mealNames[lang][periodOf(nextGroup[0].local_time)]}{" "}
+                          <small>{nextGroup[0].local_time}</small>
                           {nextGroup[0].local_date !==
                           DateTime.now()
                             .setZone(nextGroup[0].timezone)
@@ -1635,20 +1677,32 @@ function App() {
                   </div>
                 )}
                 {todayView === "time"
-                  ? times.map((time) => {
-                      const list = todays.filter((o) => o.local_time === time);
+                  ? periods.map((period) => {
+                      const list = todays.filter(
+                        (o) => periodOf(o.local_time) === period,
+                      );
                       const allDone = list.every((o) =>
                         ["taken", "skipped"].includes(statusOf(o).status),
                       );
                       return (
                         <section
-                          key={time}
+                          key={period}
                           className={
-                            "time-group" + (allDone ? " all-done" : "")
+                            "time-group period-group period-" +
+                            period +
+                            (allDone ? " all-done" : "")
                           }
                         >
                           <h2 className="group-head">
-                            <span>🕒 {time}</span>
+                            <span>
+                              <span aria-hidden>{mealIcons[period]} </span>
+                              {mealNames[lang][period]}{" "}
+                              <small className="group-time">
+                                {[
+                                  ...new Set(list.map((o) => o.local_time)),
+                                ].join(", ")}
+                              </small>
+                            </span>
                             {allDone && (
                               <span className="group-done">
                                 ✓ {L("ครบแล้ว", "Done")}
@@ -1662,13 +1716,16 @@ function App() {
                   : byMedicine.map((m: any) => (
                       <section key={m.id} className="time-group">
                         <h2 className="group-head">
-                          <button
-                            className="name-link"
-                            onClick={() => setDetail(m)}
-                          >
-                            💊 {m.data.name}
-                            {m.data.strength ? " " + m.data.strength : ""}
-                          </button>
+                          <span className="dose-name">
+                            <button
+                              className="name-link"
+                              onClick={() => setDetail(m)}
+                            >
+                              💊 {m.data.name}
+                              {m.data.strength ? " " + m.data.strength : ""}
+                            </button>
+                            <Speak text={m.data.name} lang={lang} />
+                          </span>
                         </h2>
                         {todays
                           .filter((o) => o.medication_id === m.id)
@@ -1711,7 +1768,10 @@ function App() {
                     )[0];
                   return (
                     <article key={m.id} className="medicine-card">
-                      <h3>{m.data.name}</h3>
+                      <h3 className="dose-name">
+                        {m.data.name}
+                        <Speak text={m.data.name} lang={lang} />
+                      </h3>
                       <p>{current(m.id)?.data.instructions}</p>
                       {current(m.id)?.data.prnMaximum && (
                         <p className="muted">
@@ -2033,7 +2093,13 @@ function App() {
                               aria-label={t.view + " " + m.data.name}
                             >
                               <strong>{it?.title || m.data.name}</strong>
-                              {it?.times && <span>🕒 {it.times}</span>}
+                              {it && it.slots.length > 0 && (
+                                <PeriodChips
+                                  slots={it.slots}
+                                  weekdays={it.weekdays}
+                                  lang={lang}
+                                />
+                              )}
                               {it?.how && <span>{it.how}</span>}
                               {status !== "active" && (
                                 <span className={"badge status-" + status}>
@@ -2041,6 +2107,7 @@ function App() {
                                 </span>
                               )}
                             </button>
+                            <Speak text={m.data.name} lang={lang} />
                             {edit(m)}
                           </article>
                         );
@@ -2056,48 +2123,61 @@ function App() {
                     </>
                   ) : (
                     <>
-                      {[...new Set(schedule.map((x) => x.slot.time))].map(
-                        (time) => (
-                          <section key={time} className="time-group">
+                      {MEALS.filter((p) =>
+                        schedule.some((x) => periodOf(x.slot.time) === p),
+                      ).map((period) => {
+                        const list = schedule.filter(
+                          (x) => periodOf(x.slot.time) === period,
+                        );
+                        const many =
+                          new Set(list.map((x) => x.slot.time)).size > 1;
+                        return (
+                          <section
+                            key={period}
+                            className={
+                              "time-group period-group period-" + period
+                            }
+                          >
                             <h2 className="group-head">
                               <span>
-                                🕒 {time}
-                                {mealOf(time)
-                                  ? " · " + mealNames[lang][mealOf(time)!]
-                                  : ""}
+                                <span aria-hidden>{mealIcons[period]} </span>
+                                {mealNames[lang][period]}
                               </span>
                             </h2>
-                            {schedule
-                              .filter((x) => x.slot.time === time)
-                              .map(({ m, slot }) => (
-                                <article className="med-row" key={m.id + time}>
-                                  <button
-                                    className="med-row-main"
-                                    onClick={() => setDetail(m)}
-                                  >
-                                    <strong>
-                                      {m.data.name}
-                                      {m.data.strength
-                                        ? " " + m.data.strength
-                                        : ""}
-                                    </strong>
-                                    <span>
-                                      {slot.amount} {slot.unit}
-                                      {current(m.id)?.data.food
-                                        ? " · " + current(m.id)?.data.food
-                                        : ""}
-                                      {slot.weekdays.length < 7
-                                        ? " · " +
-                                          weekdaysText(slot.weekdays, lang)
-                                        : ""}
-                                    </span>
-                                  </button>
-                                  {edit(m)}
-                                </article>
-                              ))}
+                            {list.map(({ m, slot }) => (
+                              <article
+                                className={"med-row period-" + period}
+                                key={m.id + slot.time}
+                              >
+                                <button
+                                  className="med-row-main"
+                                  onClick={() => setDetail(m)}
+                                >
+                                  <strong>
+                                    {m.data.name}
+                                    {m.data.strength
+                                      ? " " + m.data.strength
+                                      : ""}
+                                  </strong>
+                                  <span>
+                                    {slot.amount} {slot.unit}
+                                    {current(m.id)?.data.food
+                                      ? " · " + current(m.id)?.data.food
+                                      : ""}
+                                    {slot.weekdays.length < 7
+                                      ? " · " +
+                                        weekdaysText(slot.weekdays, lang)
+                                      : ""}
+                                    {many ? " · " + slot.time : ""}
+                                  </span>
+                                </button>
+                                <Speak text={m.data.name} lang={lang} />
+                                {edit(m)}
+                              </article>
+                            ))}
                           </section>
-                        ),
-                      )}
+                        );
+                      })}
                       {!schedule.length && (
                         <p className="muted">
                           {L(
@@ -2122,6 +2202,426 @@ function App() {
                 </p>
               </div>
             )}
+          </>
+        ) : tab === "settings" ? (
+          <>
+            <div className="heading">
+              <h1>{t.settings}</h1>
+            </div>
+            <section className="settings-group">
+              <h3>{L("การซิงค์ข้อมูล", "Sync")}</h3>
+              <p
+                className={
+                  "sync " +
+                  (pending.length ? "pending" : reachable ? "ok" : "off")
+                }
+                role="status"
+              >
+                <span aria-hidden>
+                  {pending.length ? "⏳ " : reachable ? "✓ " : "⚠ "}
+                </span>
+                {pending.length ? t.pending : reachable ? t.synced : t.offline}
+              </p>
+              <p className="muted">
+                {L("ซิงค์ล่าสุด", "Last server sync")}:{" "}
+                {when(view.serverAt, lang, view.profile.data.timezone)}
+              </p>
+              <button className="primary" onClick={() => sync()}>
+                🔄 {t.sync}
+              </button>
+            </section>
+            <section className="settings-group">
+              <h3>{L("การแสดงผล", "Display")}</h3>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={large}
+                  onChange={(e) => setLarge(e.target.checked)}
+                />
+                {t.largeText} / Large text
+              </label>
+            </section>
+            <section className="settings-group">
+              <h3>{t.remindersOn}</h3>
+              <InstallGuide lang={lang} always />
+              <ul className="checklist">
+                {(
+                  [
+                    [
+                      standalone(),
+                      L("ติดตั้งบนหน้าจอโฮม", "Installed on Home Screen"),
+                    ],
+                    [
+                      permission === "granted",
+                      L("อนุญาตการแจ้งเตือน", "Notifications allowed") +
+                        (permission === "denied"
+                          ? L(
+                              " (ถูกปฏิเสธ — เปิดในการตั้งค่า iPhone)",
+                              " (denied — change in iPhone Settings)",
+                            )
+                          : ""),
+                    ],
+                    [
+                      registered,
+                      L(
+                        "ลงทะเบียนกับเซิร์ฟเวอร์แล้ว",
+                        "Registered with server",
+                      ),
+                    ],
+                    [
+                      seen,
+                      L(
+                        "ยืนยันว่าเห็นการแจ้งเตือนทดสอบ",
+                        "Test notification seen",
+                      ),
+                    ],
+                  ] as const
+                ).map(([ok, label]) => (
+                  <li key={label} className={ok ? "ok" : "todo"}>
+                    <span aria-hidden>{ok ? "✓" : "○"}</span> {label}
+                    <span className="sr-only">
+                      {ok
+                        ? L(" — เรียบร้อย", " — done")
+                        : L(" — ยังไม่เสร็จ", " — not done")}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <button className="primary" onClick={reminders}>
+                {t.enable}
+              </button>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={!hideNames}
+                  onChange={(e) => setHideNames(!e.target.checked)}
+                />
+                {L(
+                  "แสดงชื่อยาและเวลาในการแจ้งเตือน",
+                  "Show medicine names and time in reminders",
+                )}
+              </label>
+              <p className="hint">
+                {L(
+                  "การแจ้งเตือนอาจเห็นได้บนหน้าจอล็อก ปิดตัวเลือกนี้หากไม่ต้องการให้ผู้อื่นเห็นชื่อยา",
+                  "Reminders can be seen on the lock screen. Turn this off to hide medicine names on this phone.",
+                )}
+              </p>
+              {registered && (
+                <button
+                  onClick={async () => {
+                    try {
+                      await api("/reminder-preferences", {
+                        deviceId,
+                        patientId: patient,
+                        enabled: false,
+                      });
+                      await db.meta.delete(
+                        "reminders:" + actor + ":" + patient,
+                      );
+                      await reconcile();
+                      setMessage(
+                        L(
+                          "✓ ปิดการแจ้งเตือนของผู้ป่วยนี้บนเครื่องนี้แล้ว",
+                          "✓ Reminders for this patient are off on this phone",
+                        ),
+                      );
+                    } catch (e: any) {
+                      setMessage(friendlyError(e, lang));
+                    }
+                  }}
+                >
+                  🔕{" "}
+                  {L(
+                    "ปิดการแจ้งเตือนบนเครื่องนี้",
+                    "Turn reminders off on this phone",
+                  )}
+                </button>
+              )}
+              <button
+                onClick={async () => {
+                  try {
+                    const r = await api("/push/test", {
+                      deviceId,
+                      patientId: patient,
+                    });
+                    await db.meta.put({
+                      key: "last-test:" + deviceId,
+                      value: r.id,
+                    });
+                    setMessage(
+                      L(
+                        "ส่งการแจ้งเตือนทดสอบแล้ว หากเห็นบนโทรศัพท์ให้กด “ฉันเห็นการแจ้งเตือนทดสอบแล้ว”",
+                        "Test sent. If it appears on your phone, tap “I saw the test notification”.",
+                      ),
+                    );
+                  } catch (e: any) {
+                    setMessage(friendlyError(e, lang));
+                  }
+                }}
+              >
+                {t.test}
+              </button>
+              <button
+                onClick={async () => {
+                  const job = (await db.meta.get("last-test:" + deviceId))
+                    ?.value;
+                  if (!job) {
+                    setMessage(
+                      L("กรุณาส่งการแจ้งเตือนทดสอบก่อน", "Send a test first"),
+                    );
+                    return;
+                  }
+                  try {
+                    await api("/push/observations", {
+                      jobId: job,
+                      deviceId,
+                      kind: "test-seen",
+                    });
+                    setSeen(true);
+                    await db.meta.put({
+                      key: "test-seen:" + deviceId,
+                      value: new Date().toISOString(),
+                    });
+                  } catch (e: any) {
+                    setMessage(friendlyError(e, lang));
+                  }
+                }}
+              >
+                {t.seen}
+              </button>
+              <p className="muted">
+                {L(
+                  "ไม่รับประกันเวลาแจ้งเตือนที่แน่นอน โหมดโฟกัส/ปิดเสียง และอินเทอร์เน็ตมีผลต่อการแสดงผล การบันทึกขณะออฟไลน์ยังหยุดการแจ้งเตือนจากเซิร์ฟเวอร์ไม่ได้ทันที",
+                  "No exact-time guarantee. Focus/silent mode and connectivity affect display. Offline dose logs cannot immediately stop server reminders.",
+                )}
+              </p>
+              {devices.length > 0 && (
+                <>
+                  <h4>{L("อุปกรณ์ที่ลงทะเบียน", "Registered devices")}</h4>
+                  {devices.map((d) => (
+                    <p key={d.id} className="device-row">
+                      <span>
+                        {d.label}
+                        {d.id === deviceId
+                          ? L(" (เครื่องนี้)", " (this device)")
+                          : ""}{" "}
+                        ·{" "}
+                        {d.revoked_at
+                          ? L("ยกเลิกแล้ว", "revoked")
+                          : L("ใช้งานอยู่", "registered")}
+                      </span>
+                      {!d.revoked_at && (
+                        <button
+                          onClick={async () => {
+                            await api("/devices/" + d.id, undefined, "DELETE");
+                            await reconcile();
+                          }}
+                        >
+                          {L("ยกเลิกอุปกรณ์", "Revoke")}
+                        </button>
+                      )}
+                    </p>
+                  ))}
+                </>
+              )}
+            </section>
+            <section className="settings-group">
+              <h3>{L("ผู้ป่วยและผู้ดูแล", "Patient and caregivers")}</h3>
+              <button onClick={() => setProfileEdit(true)}>
+                {t.profile} / {t.allergy}
+              </button>
+              <button onClick={() => setCaregiver(true)}>{t.caregiver}</button>
+            </section>
+            <section className="settings-group">
+              <h3>{L("ความเป็นส่วนตัวและข้อมูล", "Privacy and data")}</h3>
+              <p className="muted">{t.privacy}</p>
+              <button
+                disabled={view.role !== "owner"}
+                onClick={async () => {
+                  try {
+                    // Save the server's streamed file as-is; no parse/re-encode.
+                    const r = await fetch("/api/account/export", {
+                      method: "POST",
+                      headers: {
+                        Authorization: "Bearer " + token,
+                        "Content-Type": "application/json",
+                      },
+                      body: "{}",
+                    });
+                    if (!r.ok)
+                      throw Object.assign(
+                        new Error(
+                          (await r.json().catch(() => ({}))).error ||
+                            "Export failed",
+                        ),
+                        { status: r.status },
+                      );
+                    const url = URL.createObjectURL(await r.blob());
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = "medication-account.json";
+                    a.click();
+                    setTimeout(() => URL.revokeObjectURL(url), 10000);
+                  } catch (e: any) {
+                    setMessage(friendlyError(e, lang));
+                  }
+                }}
+              >
+                {t.export}
+              </button>
+            </section>
+            <section className="settings-group">
+              <h3>{L("ล้างข้อมูล / เริ่มใหม่", "Reset")}</h3>
+              <button
+                onClick={async () => {
+                  if (
+                    pending.length &&
+                    !confirm(
+                      L(
+                        "มีการแก้ไขที่ยังไม่ซิงค์ " +
+                          pending.length +
+                          " รายการ ถ้าโหลดใหม่จะหายไป ต้องการทำต่อหรือไม่",
+                        pending.length +
+                          " unsynced change(s) will be lost. Continue?",
+                      ),
+                    )
+                  )
+                    return;
+                  await Promise.all([
+                    db.snapshots.clear(),
+                    db.outbox.clear(),
+                    db.drafts.clear(),
+                    db.photos.clear(),
+                  ]);
+                  setPending([]);
+                  setTab("today");
+                  await sync();
+                  setMessage(
+                    L(
+                      "✓ โหลดข้อมูลใหม่จากเซิร์ฟเวอร์แล้ว",
+                      "✓ Reloaded from the server",
+                    ),
+                  );
+                }}
+              >
+                🔄{" "}
+                {L("โหลดข้อมูลใหม่จากเซิร์ฟเวอร์", "Reload data from server")}
+              </button>
+              <p className="hint">
+                {L(
+                  "ใช้เมื่อข้อมูลในเครื่องดูไม่ถูกต้อง ข้อมูลในบัญชีไม่หาย",
+                  "Use if this phone looks wrong. Your account data stays.",
+                )}
+              </p>
+              {view.role === "owner" && (
+                <>
+                  <button
+                    className="danger"
+                    onClick={async () => {
+                      if (
+                        !confirm(
+                          L(
+                            "ล้างข้อมูลทั้งหมดของ “" +
+                              view.profile.data.displayName +
+                              "”? จะลบ: รายการยา ประวัติการใช้ยา ประวัติแพ้ยา รูปถ่าย และสิทธิ์ของผู้ดูแล (บัญชีและเบอร์โทรยังใช้เข้าสู่ระบบได้)",
+                            "Clear all data for “" +
+                              view.profile.data.displayName +
+                              "”? This removes medicines, dose history, allergies, photos and caregiver access (your sign-in stays).",
+                          ),
+                        ) ||
+                        !confirm(
+                          L(
+                            "ยืนยันอีกครั้ง: ข้อมูลจะถูกลบถาวรและกู้คืนไม่ได้",
+                            "Confirm again: the data is deleted permanently and cannot be recovered.",
+                          ),
+                        )
+                      )
+                        return;
+                      try {
+                        const r = await api("/patients/" + patient + "/clear", {
+                          confirm: "CLEAR",
+                        });
+                        await clearPrivate();
+                        await db.meta.put({ key: "actor", value: actor });
+                        setTab("today");
+                        setPending([]);
+                        setS(undefined);
+                        setPatients([
+                          {
+                            id: r.id,
+                            data: { ...view.profile.data, allergies: [] },
+                          },
+                        ]);
+                        setPatient(r.id);
+                        await sync(r.id);
+                        setMessage(
+                          L(
+                            "✓ ล้างข้อมูลทั้งหมดแล้ว เริ่มใหม่ได้เลย",
+                            "✓ All data cleared. You can start again.",
+                          ),
+                        );
+                      } catch (e: any) {
+                        setMessage(
+                          friendlyError(e, lang) +
+                            L(
+                              " (ต้องเชื่อมต่ออินเทอร์เน็ต)",
+                              " (needs an internet connection)",
+                            ),
+                        );
+                      }
+                    }}
+                  >
+                    🗑 {L("ล้างข้อมูลทั้งหมด", "Clear all data")}
+                  </button>
+                  <p className="hint">
+                    {L(
+                      "ลบรายการยา ประวัติ ประวัติแพ้ยา รูป และผู้ดูแลทั้งหมด แต่ยังเข้าสู่ระบบด้วยเบอร์และรหัสเดิมได้",
+                      "Removes medicines, history, allergies, photos and caregivers. You keep your phone sign-in.",
+                    )}
+                  </p>
+                </>
+              )}
+            </section>
+            <section className="settings-group">
+              <h3>{L("บัญชี", "Account")}</h3>
+              {auth && <ChangePin lang={lang} />}
+              <button onClick={logout}>{t.logout}</button>
+              <button
+                className="danger"
+                disabled={view.role !== "owner"}
+                onClick={async () => {
+                  if (
+                    prompt(
+                      L(
+                        "การลบบัญชีจะลบข้อมูลยาทั้งหมดและย้อนกลับไม่ได้ พิมพ์ DELETE เพื่อยืนยัน",
+                        "Deleting the account removes all medicine records and cannot be undone. Type DELETE to confirm.",
+                      ),
+                    ) !== "DELETE"
+                  )
+                    return;
+                  try {
+                    await api("/account", { confirm: "DELETE" }, "DELETE");
+                    await clearPrivate();
+                    if (auth) await auth.auth.signOut();
+                    sessionStorage.clear();
+                    token = "";
+                    actor = "";
+                    setSigned(false);
+                    setS(undefined);
+                    setPatient("");
+                  } catch (e: any) {
+                    setMessage(friendlyError(e, lang));
+                  }
+                }}
+              >
+                {t.delete}
+              </button>
+            </section>
+            <p className="credit">
+              {L("พัฒนาโดย", "Developed by")}{" "}
+              <strong>Sorawut Thamyongkit, M.D.</strong>
+            </p>
           </>
         ) : (
           <>
@@ -2211,9 +2711,27 @@ function App() {
                 </h2>
                 {g.items.map((it) => (
                   <article key={it.id} className="summary-item">
-                    <h3>{it.title}</h3>
+                    <h3 className="dose-name">
+                      {it.title}
+                      <Speak
+                        text={
+                          view.medications.find((m) => m.id === it.id)?.data
+                            .name || ""
+                        }
+                        lang={lang}
+                      />
+                    </h3>
                     {it.how && <p className="dose-amount">{it.how}</p>}
-                    {it.times && <p>🕒 {it.times}</p>}
+                    {it.slots.length > 0 && (
+                      <p>
+                        <PeriodChips
+                          slots={it.slots}
+                          weekdays={it.weekdays}
+                          lang={lang}
+                          showTime
+                        />
+                      </p>
+                    )}
                     {it.extra.map((x) => (
                       <p key={x} className="muted">
                         {x}
@@ -2237,6 +2755,7 @@ function App() {
           ["today", "◷", t.today],
           ["medicines", "▤", t.medicines],
           ["doctor", "▧", t.doctor],
+          ["settings", "⚙", t.settings],
         ].map(([id, icon, label]) => (
           <button
             key={id}
@@ -2402,8 +2921,24 @@ function App() {
                     )}
                   />
                   <div>
+                    {canSpeak() && (
+                      <button
+                        className="speak-wide"
+                        onClick={() => speak(detail.data.name)}
+                      >
+                        🔊 {L("ฟังเสียงชื่อยา", "Hear the name")}
+                      </button>
+                    )}
                     {it?.how && <p className="dose-amount">{it.how}</p>}
-                    {it?.times && <p>🕒 {it.times}</p>}
+                    {it && it.slots.length > 0 && (
+                      <p>
+                        <PeriodChips
+                          slots={it.slots}
+                          weekdays={it.weekdays}
+                          lang={lang}
+                        />
+                      </p>
+                    )}
                     <span className={"badge status-" + status}>
                       {statusLabel(status, lang)}
                     </span>
@@ -2528,400 +3063,6 @@ function App() {
           })()}
         </Modal>
       )}
-      {settings && view && (
-        <Modal
-          title={t.settings + " · " + view.profile.data.displayName}
-          close={() => setSettings(false)}
-          closeLabel={L("ปิด", "Close")}
-        >
-          <section className="settings-group">
-            <h3>{L("การแสดงผล", "Display")}</h3>
-            <label>
-              {t.language}
-              <select
-                value={lang}
-                onChange={(e) => {
-                  localStorage.setItem("language-chosen", "1");
-                  setLang(e.target.value as Language);
-                  if (view.role === "owner")
-                    queue("profile", patient, view.profile.version, {
-                      ...view.profile.data,
-                      language: e.target.value,
-                    }).catch(() => {});
-                }}
-              >
-                <option value="th">ไทย</option>
-                <option value="en">English</option>
-              </select>
-            </label>
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={large}
-                onChange={(e) => setLarge(e.target.checked)}
-              />
-              {t.largeText} / Large text
-            </label>
-          </section>
-          <section className="settings-group">
-            <h3>{t.remindersOn}</h3>
-            <InstallGuide lang={lang} always />
-            <ul className="checklist">
-              {(
-                [
-                  [
-                    standalone(),
-                    L("ติดตั้งบนหน้าจอโฮม", "Installed on Home Screen"),
-                  ],
-                  [
-                    permission === "granted",
-                    L("อนุญาตการแจ้งเตือน", "Notifications allowed") +
-                      (permission === "denied"
-                        ? L(
-                            " (ถูกปฏิเสธ — เปิดในการตั้งค่า iPhone)",
-                            " (denied — change in iPhone Settings)",
-                          )
-                        : ""),
-                  ],
-                  [
-                    registered,
-                    L("ลงทะเบียนกับเซิร์ฟเวอร์แล้ว", "Registered with server"),
-                  ],
-                  [
-                    seen,
-                    L(
-                      "ยืนยันว่าเห็นการแจ้งเตือนทดสอบ",
-                      "Test notification seen",
-                    ),
-                  ],
-                ] as const
-              ).map(([ok, label]) => (
-                <li key={label} className={ok ? "ok" : "todo"}>
-                  <span aria-hidden>{ok ? "✓" : "○"}</span> {label}
-                  <span className="sr-only">
-                    {ok
-                      ? L(" — เรียบร้อย", " — done")
-                      : L(" — ยังไม่เสร็จ", " — not done")}
-                  </span>
-                </li>
-              ))}
-              <li>
-                {L("ซิงค์ล่าสุด", "Last server sync")}:{" "}
-                {when(view.serverAt, lang, view.profile.data.timezone)}
-              </li>
-            </ul>
-            <button className="primary" onClick={reminders}>
-              {t.enable}
-            </button>
-            {registered && (
-              <button
-                onClick={async () => {
-                  try {
-                    await api("/reminder-preferences", {
-                      deviceId,
-                      patientId: patient,
-                      enabled: false,
-                    });
-                    await db.meta.delete("reminders:" + actor + ":" + patient);
-                    await reconcile();
-                    setMessage(
-                      L(
-                        "✓ ปิดการแจ้งเตือนของผู้ป่วยนี้บนเครื่องนี้แล้ว",
-                        "✓ Reminders for this patient are off on this phone",
-                      ),
-                    );
-                  } catch (e: any) {
-                    setMessage(friendlyError(e, lang));
-                  }
-                }}
-              >
-                🔕{" "}
-                {L(
-                  "ปิดการแจ้งเตือนบนเครื่องนี้",
-                  "Turn reminders off on this phone",
-                )}
-              </button>
-            )}
-            <button
-              onClick={async () => {
-                try {
-                  const r = await api("/push/test", {
-                    deviceId,
-                    patientId: patient,
-                  });
-                  await db.meta.put({
-                    key: "last-test:" + deviceId,
-                    value: r.id,
-                  });
-                  setMessage(
-                    L(
-                      "ส่งการแจ้งเตือนทดสอบแล้ว หากเห็นบนโทรศัพท์ให้กด “ฉันเห็นการแจ้งเตือนทดสอบแล้ว”",
-                      "Test sent. If it appears on your phone, tap “I saw the test notification”.",
-                    ),
-                  );
-                } catch (e: any) {
-                  setMessage(friendlyError(e, lang));
-                }
-              }}
-            >
-              {t.test}
-            </button>
-            <button
-              onClick={async () => {
-                const job = (await db.meta.get("last-test:" + deviceId))?.value;
-                if (!job) {
-                  setMessage(
-                    L("กรุณาส่งการแจ้งเตือนทดสอบก่อน", "Send a test first"),
-                  );
-                  return;
-                }
-                try {
-                  await api("/push/observations", {
-                    jobId: job,
-                    deviceId,
-                    kind: "test-seen",
-                  });
-                  setSeen(true);
-                  await db.meta.put({
-                    key: "test-seen:" + deviceId,
-                    value: new Date().toISOString(),
-                  });
-                } catch (e: any) {
-                  setMessage(friendlyError(e, lang));
-                }
-              }}
-            >
-              {t.seen}
-            </button>
-            <p className="muted">
-              {L(
-                "ไม่รับประกันเวลาแจ้งเตือนที่แน่นอน โหมดโฟกัส/ปิดเสียง และอินเทอร์เน็ตมีผลต่อการแสดงผล การบันทึกขณะออฟไลน์ยังหยุดการแจ้งเตือนจากเซิร์ฟเวอร์ไม่ได้ทันที",
-                "No exact-time guarantee. Focus/silent mode and connectivity affect display. Offline dose logs cannot immediately stop server reminders.",
-              )}
-            </p>
-            {devices.length > 0 && (
-              <>
-                <h4>{L("อุปกรณ์ที่ลงทะเบียน", "Registered devices")}</h4>
-                {devices.map((d) => (
-                  <p key={d.id} className="device-row">
-                    <span>
-                      {d.label}
-                      {d.id === deviceId
-                        ? L(" (เครื่องนี้)", " (this device)")
-                        : ""}{" "}
-                      ·{" "}
-                      {d.revoked_at
-                        ? L("ยกเลิกแล้ว", "revoked")
-                        : L("ใช้งานอยู่", "registered")}
-                    </span>
-                    {!d.revoked_at && (
-                      <button
-                        onClick={async () => {
-                          await api("/devices/" + d.id, undefined, "DELETE");
-                          await reconcile();
-                        }}
-                      >
-                        {L("ยกเลิกอุปกรณ์", "Revoke")}
-                      </button>
-                    )}
-                  </p>
-                ))}
-              </>
-            )}
-          </section>
-          <section className="settings-group">
-            <h3>{L("ผู้ป่วยและผู้ดูแล", "Patient and caregivers")}</h3>
-            <button onClick={() => setProfileEdit(true)}>
-              {t.profile} / {t.allergy}
-            </button>
-            <button onClick={() => setCaregiver(true)}>{t.caregiver}</button>
-          </section>
-          <section className="settings-group">
-            <h3>{L("ความเป็นส่วนตัวและข้อมูล", "Privacy and data")}</h3>
-            <p className="muted">{t.privacy}</p>
-            <button
-              disabled={view.role !== "owner"}
-              onClick={async () => {
-                try {
-                  // Save the server's streamed file as-is; no parse/re-encode.
-                  const r = await fetch("/api/account/export", {
-                    method: "POST",
-                    headers: {
-                      Authorization: "Bearer " + token,
-                      "Content-Type": "application/json",
-                    },
-                    body: "{}",
-                  });
-                  if (!r.ok)
-                    throw Object.assign(
-                      new Error(
-                        (await r.json().catch(() => ({}))).error ||
-                          "Export failed",
-                      ),
-                      { status: r.status },
-                    );
-                  const url = URL.createObjectURL(await r.blob());
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = "medication-account.json";
-                  a.click();
-                  setTimeout(() => URL.revokeObjectURL(url), 10000);
-                } catch (e: any) {
-                  setMessage(friendlyError(e, lang));
-                }
-              }}
-            >
-              {t.export}
-            </button>
-          </section>
-          <section className="settings-group">
-            <h3>{L("ล้างข้อมูล / เริ่มใหม่", "Reset")}</h3>
-            <button
-              onClick={async () => {
-                if (
-                  pending.length &&
-                  !confirm(
-                    L(
-                      "มีการแก้ไขที่ยังไม่ซิงค์ " +
-                        pending.length +
-                        " รายการ ถ้าโหลดใหม่จะหายไป ต้องการทำต่อหรือไม่",
-                      pending.length +
-                        " unsynced change(s) will be lost. Continue?",
-                    ),
-                  )
-                )
-                  return;
-                await Promise.all([
-                  db.snapshots.clear(),
-                  db.outbox.clear(),
-                  db.drafts.clear(),
-                  db.photos.clear(),
-                ]);
-                setPending([]);
-                setSettings(false);
-                await sync();
-                setMessage(
-                  L(
-                    "✓ โหลดข้อมูลใหม่จากเซิร์ฟเวอร์แล้ว",
-                    "✓ Reloaded from the server",
-                  ),
-                );
-              }}
-            >
-              🔄 {L("โหลดข้อมูลใหม่จากเซิร์ฟเวอร์", "Reload data from server")}
-            </button>
-            <p className="hint">
-              {L(
-                "ใช้เมื่อข้อมูลในเครื่องดูไม่ถูกต้อง ข้อมูลในบัญชีไม่หาย",
-                "Use if this phone looks wrong. Your account data stays.",
-              )}
-            </p>
-            {view.role === "owner" && (
-              <>
-                <button
-                  className="danger"
-                  onClick={async () => {
-                    if (
-                      !confirm(
-                        L(
-                          "ล้างข้อมูลทั้งหมดของ “" +
-                            view.profile.data.displayName +
-                            "”? จะลบ: รายการยา ประวัติการใช้ยา ประวัติแพ้ยา รูปถ่าย และสิทธิ์ของผู้ดูแล (บัญชีและเบอร์โทรยังใช้เข้าสู่ระบบได้)",
-                          "Clear all data for “" +
-                            view.profile.data.displayName +
-                            "”? This removes medicines, dose history, allergies, photos and caregiver access (your sign-in stays).",
-                        ),
-                      ) ||
-                      !confirm(
-                        L(
-                          "ยืนยันอีกครั้ง: ข้อมูลจะถูกลบถาวรและกู้คืนไม่ได้",
-                          "Confirm again: the data is deleted permanently and cannot be recovered.",
-                        ),
-                      )
-                    )
-                      return;
-                    try {
-                      const r = await api("/patients/" + patient + "/clear", {
-                        confirm: "CLEAR",
-                      });
-                      await clearPrivate();
-                      await db.meta.put({ key: "actor", value: actor });
-                      setSettings(false);
-                      setPending([]);
-                      setS(undefined);
-                      setPatients([
-                        {
-                          id: r.id,
-                          data: { ...view.profile.data, allergies: [] },
-                        },
-                      ]);
-                      setPatient(r.id);
-                      await sync(r.id);
-                      setMessage(
-                        L(
-                          "✓ ล้างข้อมูลทั้งหมดแล้ว เริ่มใหม่ได้เลย",
-                          "✓ All data cleared. You can start again.",
-                        ),
-                      );
-                    } catch (e: any) {
-                      setMessage(
-                        friendlyError(e, lang) +
-                          L(
-                            " (ต้องเชื่อมต่ออินเทอร์เน็ต)",
-                            " (needs an internet connection)",
-                          ),
-                      );
-                    }
-                  }}
-                >
-                  🗑 {L("ล้างข้อมูลทั้งหมด", "Clear all data")}
-                </button>
-                <p className="hint">
-                  {L(
-                    "ลบรายการยา ประวัติ ประวัติแพ้ยา รูป และผู้ดูแลทั้งหมด แต่ยังเข้าสู่ระบบด้วยเบอร์และรหัสเดิมได้",
-                    "Removes medicines, history, allergies, photos and caregivers. You keep your phone sign-in.",
-                  )}
-                </p>
-              </>
-            )}
-          </section>
-          <section className="settings-group">
-            <h3>{L("บัญชี", "Account")}</h3>
-            {auth && <ChangePin lang={lang} />}
-            <button onClick={logout}>{t.logout}</button>
-            <button
-              className="danger"
-              disabled={view.role !== "owner"}
-              onClick={async () => {
-                if (
-                  prompt(
-                    L(
-                      "การลบบัญชีจะลบข้อมูลยาทั้งหมดและย้อนกลับไม่ได้ พิมพ์ DELETE เพื่อยืนยัน",
-                      "Deleting the account removes all medicine records and cannot be undone. Type DELETE to confirm.",
-                    ),
-                  ) !== "DELETE"
-                )
-                  return;
-                try {
-                  await api("/account", { confirm: "DELETE" }, "DELETE");
-                  await clearPrivate();
-                  if (auth) await auth.auth.signOut();
-                  sessionStorage.clear();
-                  token = "";
-                  actor = "";
-                  setSigned(false);
-                  setS(undefined);
-                  setPatient("");
-                } catch (e: any) {
-                  setMessage(friendlyError(e, lang));
-                }
-              }}
-            >
-              {t.delete}
-            </button>
-          </section>
-        </Modal>
-      )}
       {profileEdit && view && (
         <Modal
           title={t.profile + " · " + view.profile.data.displayName}
@@ -2958,6 +3099,94 @@ function App() {
     </>
   );
 }
+/** Colour-coded part of the day (morning, noon, evening, bedtime). */
+function Period({
+  time,
+  lang,
+  showTime = false,
+  amount = "",
+}: {
+  time: string;
+  lang: Language;
+  showTime?: boolean;
+  amount?: string;
+}) {
+  const p = periodOf(time);
+  return (
+    <span className={"period period-" + p}>
+      <span aria-hidden>{mealIcons[p]} </span>
+      {mealNames[lang][p]}
+      {showTime && <small> {time}</small>}
+      {amount && <span className="period-amount"> · {amount}</span>}
+    </span>
+  );
+}
+function PeriodChips({
+  slots,
+  lang,
+  weekdays = "",
+  showTime = false,
+}: {
+  slots: { time: string; amount?: string; unit?: string }[];
+  lang: Language;
+  weekdays?: string;
+  showTime?: boolean;
+}) {
+  if (!slots.length) return null;
+  const periods = slots.map((x) => periodOf(x.time));
+  // Show the clock only when it is needed to tell two doses apart.
+  const clash = periods.some((p, i) => periods.indexOf(p) !== i);
+  return (
+    <span className="periods">
+      {slots.map((x) => (
+        <Period
+          key={x.time}
+          time={x.time}
+          lang={lang}
+          showTime={showTime || clash}
+          amount={x.amount ? x.amount + " " + (x.unit || "") : ""}
+        />
+      ))}
+      {weekdays && <span className="period-days">{weekdays}</span>}
+    </span>
+  );
+}
+const canSpeak = () =>
+  typeof window !== "undefined" &&
+  "speechSynthesis" in window &&
+  typeof SpeechSynthesisUtterance !== "undefined";
+/** Reads a medicine name aloud, in English unless it is written in Thai. */
+function speak(text: string) {
+  if (!canSpeak()) return;
+  const synth = window.speechSynthesis;
+  synth.cancel();
+  const thai = /[\u0E00-\u0E7F]/.test(text);
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = thai ? "th-TH" : "en-US";
+  const voice = synth
+    .getVoices()
+    .find((v) => v.lang.replace("_", "-").startsWith(thai ? "th" : "en-US"));
+  if (voice) u.voice = voice;
+  u.rate = 0.75;
+  synth.speak(u);
+}
+function Speak({ text, lang }: { text: string; lang: Language }) {
+  if (!canSpeak() || !text?.trim()) return null;
+  return (
+    <button
+      type="button"
+      className="speak"
+      aria-label={(lang === "th" ? "ฟังเสียงชื่อยา " : "Hear the name ") + text}
+      title={lang === "th" ? "ฟังเสียงชื่อยา" : "Hear the name"}
+      onClick={(e) => {
+        e.stopPropagation();
+        speak(text);
+      }}
+    >
+      🔊
+    </button>
+  );
+}
 function Photo({ photos }: { photos: any[] }) {
   const [url, setUrl] = useState("");
   const id = photos[0]?.id;
@@ -2989,6 +3218,8 @@ function Photo({ photos }: { photos: any[] }) {
     </div>
   );
 }
+let openModals = 0,
+  pendingBack: ReturnType<typeof setTimeout> | undefined;
 function Modal({
   title,
   close,
@@ -3001,18 +3232,63 @@ function Modal({
   children: React.ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const closeRef = useRef(close);
+  closeRef.current = close;
   useEffect(() => {
     const previous = document.activeElement as HTMLElement;
     const dialog = ref.current;
     dialog?.showModal();
+    // The phone's Back gesture/button closes the pop-up instead of leaving the app.
+    const depth = ++openModals;
+    const state = { ...window.history.state, modalDepth: depth };
+    if (pendingBack) {
+      // One pop-up replaced another (details → edit): reuse its history entry.
+      clearTimeout(pendingBack);
+      pendingBack = undefined;
+      window.history.replaceState(state, "");
+    } else window.history.pushState(state, "");
+    const onPop = () => {
+      if ((window.history.state?.modalDepth || 0) < depth) closeRef.current();
+    };
+    window.addEventListener("popstate", onPop);
     return () => {
+      window.removeEventListener("popstate", onPop);
+      openModals--;
+      if (window.history.state?.modalDepth === depth)
+        pendingBack = setTimeout(() => {
+          pendingBack = undefined;
+          if (window.history.state?.modalDepth === depth) window.history.back();
+        }, 0);
       dialog?.close();
       previous?.focus();
     };
   }, []);
+  const back = document.documentElement.lang === "en" ? "Back" : "กลับ";
   return (
-    <dialog ref={ref} onCancel={close}>
-      <div className="heading">
+    <dialog
+      ref={ref}
+      onCancel={(e) => {
+        e.preventDefault();
+        close();
+      }}
+      onClick={(e) => {
+        // A tap on the dimmed area outside the box also goes back.
+        const r = ref.current?.getBoundingClientRect();
+        if (
+          e.target === ref.current &&
+          r &&
+          (e.clientX < r.left ||
+            e.clientX > r.right ||
+            e.clientY < r.top ||
+            e.clientY > r.bottom)
+        )
+          close();
+      }}
+    >
+      <div className="heading modal-head">
+        <button className="back-button" onClick={close}>
+          ‹ {back}
+        </button>
         <h2>{title}</h2>
         <button onClick={close} aria-label={closeLabel}>
           ✕
@@ -4016,8 +4292,8 @@ function InstallGuide({
             <span>
               {L("แตะ", "Tap")} <strong>{L("เพิ่ม", "Add")}</strong>{" "}
               {L(
-                "แล้วเปิดแอปจากไอคอน “เพื่อนเรื่องยา” ทุกครั้ง",
-                "then always open the app from the new icon",
+                "แล้วเปิดแอปจากไอคอน “ยาของฉัน” ทุกครั้ง",
+                "then always open the app from the new “My Medicine” icon",
               )}
             </span>
           </li>

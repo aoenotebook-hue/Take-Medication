@@ -299,7 +299,7 @@ await writeFile(
     {
       openapi: "3.1.0",
       info: {
-        title: "Medication Companion",
+        title: "My Medicine",
         version: "0.1.0",
         description:
           "Snapshot plus operation API adapts the specification route outline: profile/medication/regimen/dose/status/snooze mutations share one idempotent transaction handler.",
