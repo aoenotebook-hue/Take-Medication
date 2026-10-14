@@ -105,6 +105,13 @@ export const operationSchema = z.object({
   data: z.any(),
 });
 export type Operation = z.infer<typeof operationSchema>;
+export const MAX_SNOOZES = 6;
+/** How long after the dose time "remind me later" stays available. */
+export const snoozeWindowSeconds = () =>
+  Math.max(
+    Number(process.env.REMINDER_FRESHNESS_SECONDS || 900),
+    Number(process.env.SNOOZE_WINDOW_MINUTES || 60) * 60,
+  );
 export async function applyOperation(actor: string, input: unknown) {
   const op = operationSchema.parse(input);
   return transaction(async (c) => {
@@ -288,7 +295,11 @@ export async function applyOperation(actor: string, input: unknown) {
           throw new HttpError(409, "Occurrence replaced or stopped");
         if (d.action === "as-needed")
           throw new HttpError(422, "As-needed records have no occurrence");
-        if (d.action === "taken" && o.intended_at > new Date())
+        // Reminders can arrive a couple of minutes early; allow 5 minutes.
+        if (
+          d.action === "taken" &&
+          o.intended_at.getTime() > Date.now() + 300000
+        )
           throw new HttpError(422, "Future dose cannot be confirmed");
         if (
           d.action === "taken" &&
@@ -347,7 +358,7 @@ export async function applyOperation(actor: string, input: unknown) {
       const d = z
         .object({
           occurrenceId: z.string().uuid(),
-          minutes: z.union([z.literal(10), z.literal(30)]),
+          minutes: z.union([z.literal(10), z.literal(15), z.literal(30)]),
         })
         .parse(op.data);
       const o = (
@@ -367,18 +378,46 @@ export async function applyOperation(actor: string, input: unknown) {
           o.id,
         ])
       ).rows;
-      if (Number(n) >= 2 || projectDose(events).status !== "unconfirmed")
+      if (
+        Number(n) >= MAX_SNOOZES ||
+        projectDose(events).status !== "unconfirmed"
+      )
         throw new HttpError(409, "Snooze unavailable");
+      // A snoozed reminder may repeat until the snooze window after the dose
+      // time ends; each repeat stays deliverable for the usual freshness time.
+      const due = new Date(Date.now() + d.minutes * 60000);
+      if (
+        due.getTime() >=
+        o.intended_at.getTime() + snoozeWindowSeconds() * 1000
+      )
+        throw new HttpError(422, "Snooze exceeds the reminder window");
       const expires = new Date(
-        o.intended_at.getTime() +
+        due.getTime() +
           Number(process.env.REMINDER_FRESHNESS_SECONDS || 900) * 1000,
       );
-      const due = new Date(Date.now() + d.minutes * 60000);
-      if (due >= expires)
-        throw new HttpError(
-          422,
-          "Snooze exceeds notification freshness window",
-        );
+      // Remind about every medicine still due at the same time, in one notice.
+      const siblings = (
+        await c.query(
+          "SELECT id FROM dose_occurrences WHERE patient_id=$1 AND intended_at=$2 AND valid AND id<>$3 ORDER BY id",
+          [op.patientId, o.intended_at, o.id],
+        )
+      ).rows.map((r) => r.id);
+      const siblingEvents = siblings.length
+        ? (
+            await c.query(
+              "SELECT * FROM dose_events WHERE occurrence_id=ANY($1::uuid[])",
+              [siblings],
+            )
+          ).rows
+        : [];
+      const group = [
+        o.id,
+        ...siblings.filter(
+          (id) =>
+            projectDose(siblingEvents.filter((e) => e.occurrence_id === id))
+              .status === "unconfirmed",
+        ),
+      ];
       await c.query(
         "INSERT INTO snoozes(id,patient_id,occurrence_id,actor_id) VALUES($1,$2,$3,$4)",
         [op.id, op.patientId, o.id, actor],
@@ -389,7 +428,7 @@ export async function applyOperation(actor: string, input: unknown) {
           op.patientId,
           o.id,
           op.id,
-          JSON.stringify([o.id]),
+          JSON.stringify(group),
           "snooze-" + op.id,
           due,
           expires,

@@ -9,6 +9,7 @@ import {
   dispatchOne,
 } from "../apps/worker/src/worker";
 import { validateEndpoint } from "../apps/worker/src/push";
+import { projectDose } from "../packages/domain/src";
 const owner = randomUUID(),
   editor = randomUUID(),
   viewer = randomUUID(),
@@ -270,7 +271,28 @@ describe("PostgreSQL authorization and transactions", () => {
         op("dose", future.id, 0, { ...event, occurrenceId: future.id }),
       ),
     ).rejects.toMatchObject({ status: 422 });
-    for (let i = 0; i < 2; i++)
+    // "Remind me later" must stay inside the window after the dose time.
+    process.env.SNOOZE_WINDOW_MINUTES = "1";
+    await expect(
+      applyOperation(
+        owner,
+        op("snooze", occurrence.id, 0, {
+          occurrenceId: occurrence.id,
+          minutes: 30,
+        }),
+      ),
+    ).rejects.toMatchObject({ status: 422 });
+    delete process.env.SNOOZE_WINDOW_MINUTES;
+    // 15 minutes is allowed (longer than the first reminder's window).
+    await applyOperation(
+      owner,
+      op("snooze", occurrence.id, 0, {
+        occurrenceId: occurrence.id,
+        minutes: 15,
+      }),
+    );
+    // Up to six repeats in total.
+    for (let i = 0; i < 5; i++)
       await applyOperation(
         owner,
         op("snooze", occurrence.id, 0, {
@@ -402,6 +424,54 @@ describe("Durable queue", () => {
       dispatchOne(new Date(), sender),
     ]);
     expect(sent).toBe(1);
+  });
+  it("a snoozed reminder repeats once for every medicine still due then", async () => {
+    const second = randomUUID();
+    await applyOperation(
+      owner,
+      op("medication", second, 0, { ...medication, name: "Synthetic second" }),
+    );
+    await applyOperation(owner, op("regimen", second, 1, instruction));
+    const snap = await snapshot(owner, patient);
+    const sibling = snap.occurrences.find(
+      (o: any) =>
+        o.medication_id === second &&
+        o.intended_at.getTime() === occurrence.intended_at.getTime(),
+    );
+    expect(sibling).toBeTruthy();
+    const firstOpen =
+      projectDose(
+        snap.events.filter((e: any) => e.occurrence_id === occurrence.id),
+      ).status === "unconfirmed";
+    const later = op("snooze", sibling.id, 0, {
+      occurrenceId: sibling.id,
+      minutes: 15,
+    });
+    await applyOperation(owner, later);
+    const job = (
+      await pool.query("SELECT * FROM reminder_jobs WHERE kind=$1", [
+        "snooze-" + later.id,
+      ])
+    ).rows[0];
+    expect(job.occurrence_ids).toContain(sibling.id);
+    expect(job.occurrence_ids.includes(occurrence.id)).toBe(firstOpen);
+    expect(job.expires_at.getTime() - job.due_at.getTime()).toBe(900000);
+    const sent: any[] = [];
+    for (let i = 0; i < 20; i++)
+      if (
+        !(await dispatchOne(
+          new Date(Date.now() + 16 * 60000),
+          async (_s, p) => {
+            sent.push(p);
+            return { statusCode: 201 };
+          },
+        ))
+      )
+        break;
+    const repeat = sent.find((p) => p.id === job.id);
+    expect(repeat.snooze).toBe(true);
+    expect(repeat.detail.title).toMatch(/^Medicine time \(reminder\) · /);
+    expect(repeat.detail.body).toContain("Synthetic second");
   });
   it("lease recovery and expired jobs never replay backlog", async () => {
     const id = randomUUID();
