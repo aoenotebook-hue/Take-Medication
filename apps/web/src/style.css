@@ -886,3 +886,7 @@ button.danger {
     transform: translateY(6px);
   }
 }
+.draft-row {
+  border-style: dashed;
+  background: #fffaf0;
+}

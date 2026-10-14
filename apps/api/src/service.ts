@@ -282,6 +282,10 @@ export async function applyOperation(actor: string, input: unknown) {
           )
         ).rows[0];
         if (!o) throw new HttpError(404, "Occurrence not found");
+        // New Taken/Skipped records need a current dose time. Corrections
+        // (undo/resolve) of earlier records stay possible for history.
+        if (!o.valid && (d.action === "taken" || d.action === "skipped"))
+          throw new HttpError(409, "Occurrence replaced or stopped");
         if (d.action === "as-needed")
           throw new HttpError(422, "As-needed records have no occurrence");
         if (d.action === "taken" && o.intended_at > new Date())

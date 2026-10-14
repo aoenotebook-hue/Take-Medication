@@ -105,7 +105,9 @@ export function describe(
         })
         .join(" · ") +
       " · " +
-      weekdaysText(slots[0].weekdays || [1, 2, 3, 4, 5, 6, 7], lang)
+      weekdaysText(slots[0].weekdays || [1, 2, 3, 4, 5, 6, 7], lang) +
+      // Times are in the schedule's own timezone; say so when it is not Bangkok.
+      (d?.timezone && d.timezone !== "Asia/Bangkok" ? ` (${d.timezone})` : "")
     : "";
   const extra = [
     [m.data.generic, m.data.brand].filter(Boolean).join(" / "),

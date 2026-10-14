@@ -507,6 +507,36 @@ describe("Durable queue", () => {
     ).toHaveLength(0);
     expect(futureBefore).toBeGreaterThan(0);
   });
+  it("new dose records cannot attach to a replaced or stopped dose time", async () => {
+    const stale = (
+      await pool.query(
+        "SELECT id FROM dose_occurrences WHERE medication_id=$1 AND NOT valid AND intended_at>now() LIMIT 1",
+        [med],
+      )
+    ).rows[0];
+    expect(stale).toBeTruthy();
+    await expect(
+      applyOperation(
+        owner,
+        op("dose", stale.id, 0, {
+          occurrenceId: stale.id,
+          medicationId: med,
+          action: "skipped",
+          baseEventIds: [],
+        }),
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      message: "Occurrence replaced or stopped",
+    });
+    expect(
+      (
+        await pool.query("SELECT 1 FROM dose_events WHERE occurrence_id=$1", [
+          stale.id,
+        ])
+      ).rowCount,
+    ).toBe(0);
+  });
 });
 
 async function cleanup() {

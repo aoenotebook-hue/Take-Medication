@@ -56,8 +56,31 @@ const auth =
     : null;
 let token = sessionStorage.getItem("demo-token") || "",
   actor = sessionStorage.getItem("actor") || "";
-const deviceId = localStorage.getItem("device-id") || crypto.randomUUID();
-localStorage.setItem("device-id", deviceId);
+// One device id per account on this browser, so a second account never
+// collides with (or takes over) the first account's reminder binding.
+let deviceId = "";
+function selectDevice(who: string) {
+  const key = "device-id:" + who;
+  let id = localStorage.getItem(key);
+  if (!id) {
+    // The first account keeps the id it registered before ids were per-account.
+    id = localStorage.getItem("device-id") || crypto.randomUUID();
+    localStorage.removeItem("device-id");
+    localStorage.setItem(key, id);
+  }
+  deviceId = id;
+}
+// Bumped on sign-in, sign-out and data reset; late async results from an
+// older generation must not touch state or private storage.
+let generation = 0;
+async function dropBrowserSubscription() {
+  try {
+    const reg = await navigator.serviceWorker?.getRegistration();
+    await (await reg?.pushManager?.getSubscription())?.unsubscribe();
+  } catch {
+    /* best effort */
+  }
+}
 async function api(path: string, body?: any, method = body ? "POST" : "GET") {
   const headers: any = { Authorization: "Bearer " + token };
   if (body !== undefined) headers["Content-Type"] = "application/json";
@@ -274,6 +297,7 @@ function App() {
     [caregiver, setCaregiver] = useState(false),
     [history, setHistory] = useState(false),
     [needsProfile, setNeedsProfile] = useState(false),
+    [drafts, setDrafts] = useState<any[]>([]),
     [snoozing, setSnoozing] = useState(""),
     [medView, setMedViewState] = useState<"time" | "medicine">(
       localStorage.getItem("medicine-view") === "time" ? "time" : "medicine",
@@ -294,6 +318,24 @@ function App() {
     localStorage.setItem("today-view", mode);
   };
   const syncing = useRef(false);
+  const patientRef = useRef(patient);
+  patientRef.current = patient;
+  const syncMessage = useRef("");
+  const inFlight = useRef(new Set<string>());
+  // Display clock: re-render so due doses unlock and "next" stays current.
+  // It never schedules or sends reminders.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setTick((n) => n + 1), 30000);
+    return () => clearInterval(timer);
+  }, []);
+  const [freshness, setFreshness] = useState(900);
+  const snoozeChoices = (o: any) =>
+    [10, 30].filter(
+      (minutes) =>
+        Date.now() + minutes * 60000 <
+        Date.parse(o.intended_at) + freshness * 1000,
+    );
   const syncAgain = useRef<string | undefined>(undefined);
   useEffect(() => {
     document.documentElement.lang = lang;
@@ -301,8 +343,17 @@ function App() {
     localStorage.setItem("language", lang);
     localStorage.setItem("large-text", large ? "1" : "0");
   }, [lang, large]);
+  async function loadDrafts(id = patient) {
+    const scope = actor + ":" + id;
+    setDrafts(
+      (await db.drafts.toArray())
+        .filter((d) => d.value?.scope === scope && d.value?.isNew)
+        .sort((a, b) => b.value.savedAt - a.value.savedAt),
+    );
+  }
   async function loadLocal(id = patient) {
     if (!id) return;
+    await loadDrafts(id);
     const cached = await db.snapshots.get(actor + ":" + id);
     if (cached) setS(cached.value);
     setLocalPhotos(
@@ -324,6 +375,10 @@ function App() {
   }
   async function sync(id = patient) {
     if (!id || !token) return;
+    const started = generation,
+      who = actor;
+    // A result is still wanted only if the same account and session remain.
+    const current = () => started === generation && who === actor;
     if (syncing.current) {
       syncAgain.current = id;
       return;
@@ -377,15 +432,26 @@ function App() {
             body: p.blob,
           },
         );
-        if (!response.ok) throw new Error((await response.json()).error);
+        if (!response.ok)
+          throw Object.assign(
+            new Error(
+              (await response.json().catch(() => ({}))).error ||
+                "Photo upload failed",
+            ),
+            { status: response.status },
+          );
         await db.photos.update(p.id, { pending: false });
       }
       const snap = await api("/patients/" + id + "/snapshot");
-      await db.snapshots.put({ key: actor + ":" + id, value: snap });
-      setS(snap);
-      setLang(snap.profile.data.language);
+      if (!current()) return;
+      await db.snapshots.put({ key: who + ":" + id, value: snap });
+      // Another patient may have been chosen while this request was running.
+      if (patientRef.current === id) setS(snap);
+      // The patient's language is only a default; a chosen display language stays.
+      if (!localStorage.getItem("language-chosen"))
+        setLang(snap.profile.data.language);
       setReachable(true);
-      setMessage("");
+      setMessage((m) => (m === syncMessage.current ? "" : m));
       const opaque = location.hash.match(
         /^#notification=([a-f0-9-]{36})$/,
       )?.[1];
@@ -410,11 +476,12 @@ function App() {
         ),
       );
       for (const p of snap.photos) {
+        if (!current()) return;
         if (!(await db.photos.get(p.id))) {
           const r = await fetch("/api/photos/" + p.id, {
             headers: { Authorization: "Bearer " + token },
           });
-          if (r.ok)
+          if (r.ok && current())
             await db.photos.put({
               id: p.id,
               patientId: id,
@@ -423,18 +490,25 @@ function App() {
         }
       }
     } catch (e: any) {
+      if (!current()) return;
       setReachable(false);
+      let text: string;
       if (e.status === 403) {
         await clearPrivate();
         setS(undefined);
         setPatient("");
-        setMessage(
-          L(
-            "สิทธิ์การเข้าถึงถูกยกเลิก ลบข้อมูลในเครื่องแล้ว",
-            "Access revoked. Local app data cleared.",
-          ),
+        text = L(
+          "สิทธิ์การเข้าถึงถูกยกเลิก ลบข้อมูลในเครื่องแล้ว",
+          "Access revoked. Local app data cleared.",
         );
-      } else setMessage(friendlyError(e, lang));
+      } else if (e.status === 401)
+        text = L(
+          "หมดเวลาการเข้าสู่ระบบ กรุณาออกจากระบบแล้วเข้าใหม่ (ข้อมูลที่ยังไม่ซิงค์ยังอยู่ในเครื่อง)",
+          "Your session expired. Please sign in again (unsynced changes stay on this phone).",
+        );
+      else text = friendlyError(e, lang);
+      syncMessage.current = text;
+      setMessage(text);
     } finally {
       syncing.current = false;
       const next = syncAgain.current;
@@ -443,6 +517,8 @@ function App() {
     }
   }
   async function afterLogin() {
+    generation++;
+    selectDevice(actor);
     const old = (await db.meta.get("actor"))?.value;
     if (old && old !== actor) await clearPrivate();
     await db.meta.put({ key: "actor", value: actor });
@@ -466,6 +542,9 @@ function App() {
       }
     }
     try {
+      api("/push/config")
+        .then((c) => c.freshnessSeconds && setFreshness(c.freshnessSeconds))
+        .catch(() => {});
       const list = await api("/patients");
       const cachedProfiles = await db.snapshots.toArray();
       if (
@@ -521,10 +600,20 @@ function App() {
           afterLogin();
         } else if (token) afterLogin();
       });
-      const { data } = auth.auth.onAuthStateChange((_e, session) => {
+      const { data } = auth.auth.onAuthStateChange((event, session) => {
         if (session) {
           token = session.access_token;
           actor = session.user.id;
+        } else if (event === "SIGNED_OUT" && actor) {
+          // Session ended elsewhere (expired, revoked): remove private data.
+          generation++;
+          token = "";
+          actor = "";
+          clearPrivate().finally(() => {
+            setSigned(false);
+            setS(undefined);
+            setPatient("");
+          });
         }
       });
       return () => data.subscription.unsubscribe();
@@ -575,7 +664,10 @@ function App() {
             consent: true,
             subscription: sub.toJSON(),
           });
-      } catch {
+      } catch (e: any) {
+        // 409: revoked remotely or turned off; only a new Enable tap restores it.
+        if (e.status === 409)
+          await db.meta.delete("reminders:" + actor + ":" + patient);
         setRegistered(false);
       }
     }
@@ -631,12 +723,20 @@ function App() {
     } else {
       if (
         !confirm(
-          "Offline sign-out: remote device removal is pending. Generic notifications may continue until you reconnect. Continue?",
+          L(
+            "ออฟไลน์อยู่: จะยกเลิกการแจ้งเตือนของเครื่องนี้เมื่อเชื่อมต่ออีกครั้ง ระหว่างนี้อาจยังได้รับการแจ้งเตือนทั่วไป ต้องการออกจากระบบหรือไม่",
+            "Offline sign-out: removing this device's reminders waits until you reconnect. Generic notifications may continue. Continue?",
+          ),
         )
       )
         return;
-      localStorage.setItem("pending-revocation", deviceId);
+      localStorage.setItem(
+        "pending-revocation",
+        JSON.stringify({ actor, deviceId }),
+      );
     }
+    generation++;
+    await dropBrowserSubscription();
     await clearPrivate();
     if (auth) await auth.auth.signOut();
     sessionStorage.clear();
@@ -652,10 +752,22 @@ function App() {
     return () => clearTimeout(timer);
   }, [message]);
   useEffect(() => {
-    if (signed && localStorage.getItem("pending-revocation"))
-      api("/devices/" + deviceId, undefined, "DELETE")
+    if (!signed) return;
+    let pendingRevocation: { actor?: string; deviceId?: string } = {};
+    try {
+      pendingRevocation = JSON.parse(
+        localStorage.getItem("pending-revocation") || "{}",
+      );
+    } catch {
+      localStorage.removeItem("pending-revocation");
+    }
+    // Only the account that signed out offline may finish its own revocation.
+    if (pendingRevocation.deviceId && pendingRevocation.actor === actor)
+      api("/devices/" + pendingRevocation.deviceId, undefined, "DELETE")
         .then(() => localStorage.removeItem("pending-revocation"))
-        .catch(() => {});
+        .catch((e) => {
+          if (e.status === 404) localStorage.removeItem("pending-revocation");
+        });
   }, [signed, reachable]);
   async function removeMedicine(m: any) {
     if (
@@ -714,6 +826,16 @@ function App() {
       )
       .at(-1);
   async function dose(o: any, action: string) {
+    // One recorded action per tap: ignore repeats while the first is saving.
+    if (inFlight.current.has(o.id)) return;
+    inFlight.current.add(o.id);
+    try {
+      await recordDose(o, action);
+    } finally {
+      inFlight.current.delete(o.id);
+    }
+  }
+  async function recordDose(o: any, action: string) {
     const heads = projectDose(
       view!.events.filter((e) => e.occurrence_id === o.id),
     ).heads;
@@ -792,6 +914,7 @@ function App() {
         patientId: patient,
         label: "My phone",
         consent: true,
+        explicit: true,
         subscription: sub.toJSON(),
       });
       await db.meta.put({
@@ -815,7 +938,10 @@ function App() {
       {t.language}
       <select
         value={lang}
-        onChange={(e) => setLang(e.target.value as Language)}
+        onChange={(e) => {
+          localStorage.setItem("language-chosen", "1");
+          setLang(e.target.value as Language);
+        }}
       >
         <option value="th">ไทย</option>
         <option value="en">English</option>
@@ -1044,6 +1170,60 @@ function App() {
             {busy ? t.loading : t.start2}
           </button>
         </form>
+        <details className="about">
+          <summary>
+            {L(
+              "เป็นผู้ดูแลและมีรหัสเชิญ?",
+              "Caring for someone with an invitation code?",
+            )}
+          </summary>
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const f = new FormData(e.currentTarget);
+              setBusy(true);
+              try {
+                await api("/invitations/accept", {
+                  token: String(f.get("token") || "").trim(),
+                  agreed: f.get("agreed") === "on",
+                });
+                const list = await api("/patients");
+                setPatients(list);
+                if (list.length) {
+                  setNeedsProfile(false);
+                  patientRef.current = list[0].id;
+                  setPatient(list[0].id);
+                  await sync(list[0].id);
+                }
+              } catch (err: any) {
+                setMessage(friendlyError(err, lang));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            <p className="hint">
+              {L(
+                "ไม่ต้องสร้างข้อมูลผู้ป่วยของตัวเอง ใส่รหัสที่ได้รับจากผู้ป่วยได้เลย",
+                "No need to create your own patient profile; enter the code you received.",
+              )}
+            </p>
+            <label>
+              {L("รหัสเชิญ", "Invitation code")}
+              <input name="token" required autoComplete="off" />
+            </label>
+            <label className="check">
+              <input type="checkbox" name="agreed" required />
+              {L(
+                "ฉันยินยอมเข้าถึงข้อมูลของผู้ป่วยนี้",
+                "I agree to access this patient's information",
+              )}
+            </label>
+            <button disabled={busy}>
+              {L("ยอมรับคำเชิญ", "Accept invitation")}
+            </button>
+          </form>
+        </details>
         {message && (
           <p role="alert" className="warning">
             {message}
@@ -1078,6 +1258,7 @@ function App() {
                 value={patient}
                 onChange={async (e) => {
                   setS(undefined);
+                  patientRef.current = e.target.value;
                   setPatient(e.target.value);
                   await loadLocal(e.target.value);
                   await sync(e.target.value);
@@ -1273,7 +1454,7 @@ function App() {
                       snoozing === o.id ? (
                         <div className="snooze">
                           <span>{t.snoozeChoose}</span>
-                          {[10, 30].map((minutes) => (
+                          {snoozeChoices(o).map((minutes) => (
                             <button
                               key={minutes}
                               onClick={async () => {
@@ -1303,7 +1484,7 @@ function App() {
                               : "✓ " + t.takenStatus}
                           </button>
                           <span className="dose-links">
-                            {!future && (
+                            {!future && snoozeChoices(o).length > 0 && (
                               <button
                                 className="link-button"
                                 disabled={locked}
@@ -1680,6 +1861,47 @@ function App() {
                 ＋ {t.add}
               </button>
             </div>
+            {drafts
+              .filter((d) => !view.medications.some((m) => m.id === d.id))
+              .map((d) => (
+                <article className="med-row draft-row" key={d.id}>
+                  <button
+                    className="med-row-main"
+                    onClick={() => setEditing({ id: d.id, version: 0 })}
+                  >
+                    <strong>
+                      📝{" "}
+                      {d.value.m?.name ||
+                        L("ยาที่ยังไม่ได้ตั้งชื่อ", "Unnamed medicine")}
+                    </strong>
+                    <span>
+                      {L(
+                        "ร่างที่ยังไม่บันทึก · แตะเพื่อทำต่อ",
+                        "Unsaved draft · tap to continue",
+                      )}
+                    </span>
+                  </button>
+                  <div className="row-actions">
+                    <button
+                      className="edit-btn"
+                      onClick={() => setEditing({ id: d.id, version: 0 })}
+                    >
+                      ✎ {L("ทำต่อ", "Continue")}
+                    </button>
+                    <button
+                      className="edit-btn delete-btn"
+                      onClick={async () => {
+                        if (confirm(L("ทิ้งร่างนี้?", "Discard this draft?"))) {
+                          await db.drafts.delete(d.id);
+                          await loadDrafts();
+                        }
+                      }}
+                    >
+                      🗑 {L("ทิ้ง", "Discard")}
+                    </button>
+                  </div>
+                </article>
+              ))}
             {(() => {
               const rows = summaryRows(view);
               const info = (id: string) => {
@@ -1938,6 +2160,12 @@ function App() {
                 ? t.loading
                 : "📄 " + L("ส่งหรือพิมพ์ PDF", "Share or print PDF")}
             </button>
+            <p className="hint">
+              {L(
+                "ไฟล์มีข้อมูลส่วนตัว ส่งให้เฉพาะแพทย์หรือผู้ที่ไว้ใจเท่านั้น",
+                "The file contains personal information; share it only with your doctor or people you trust.",
+              )}
+            </p>
             <section className="doctor-head">
               <h2>{view.profile.data.displayName}</h2>
               <p>
@@ -2028,9 +2256,13 @@ function App() {
             view.profile.data.displayName
           }
           closeLabel={L("ปิด", "Close")}
-          close={() => setEditing(undefined)}
+          close={() => {
+            setEditing(undefined);
+            loadDrafts();
+          }}
         >
           <MedicineForm
+            scope={actor + ":" + patient}
             t={t}
             lang={lang}
             medicine={editing}
@@ -2090,6 +2322,7 @@ function App() {
               }
               await db.drafts.delete(editing.id);
               setEditing(undefined);
+              loadDrafts();
               setMessage(
                 L("✓ บันทึกแล้ว: ", "✓ Saved: ") +
                   m.name +
@@ -2308,6 +2541,7 @@ function App() {
               <select
                 value={lang}
                 onChange={(e) => {
+                  localStorage.setItem("language-chosen", "1");
                   setLang(e.target.value as Language);
                   if (view.role === "owner")
                     queue("profile", patient, view.profile.version, {
@@ -2379,6 +2613,35 @@ function App() {
             <button className="primary" onClick={reminders}>
               {t.enable}
             </button>
+            {registered && (
+              <button
+                onClick={async () => {
+                  try {
+                    await api("/reminder-preferences", {
+                      deviceId,
+                      patientId: patient,
+                      enabled: false,
+                    });
+                    await db.meta.delete("reminders:" + actor + ":" + patient);
+                    await reconcile();
+                    setMessage(
+                      L(
+                        "✓ ปิดการแจ้งเตือนของผู้ป่วยนี้บนเครื่องนี้แล้ว",
+                        "✓ Reminders for this patient are off on this phone",
+                      ),
+                    );
+                  } catch (e: any) {
+                    setMessage(friendlyError(e, lang));
+                  }
+                }}
+              >
+                🔕{" "}
+                {L(
+                  "ปิดการแจ้งเตือนบนเครื่องนี้",
+                  "Turn reminders off on this phone",
+                )}
+              </button>
+            )}
             <button
               onClick={async () => {
                 try {
@@ -2480,12 +2743,29 @@ function App() {
               disabled={view.role !== "owner"}
               onClick={async () => {
                 try {
-                  const data = await api("/account/export", {});
-                  download(
-                    JSON.stringify(data, null, 2),
-                    "medication-account.json",
-                    "application/json",
-                  );
+                  // Save the server's streamed file as-is; no parse/re-encode.
+                  const r = await fetch("/api/account/export", {
+                    method: "POST",
+                    headers: {
+                      Authorization: "Bearer " + token,
+                      "Content-Type": "application/json",
+                    },
+                    body: "{}",
+                  });
+                  if (!r.ok)
+                    throw Object.assign(
+                      new Error(
+                        (await r.json().catch(() => ({}))).error ||
+                          "Export failed",
+                      ),
+                      { status: r.status },
+                    );
+                  const url = URL.createObjectURL(await r.blob());
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = "medication-account.json";
+                  a.click();
+                  setTimeout(() => URL.revokeObjectURL(url), 10000);
                 } catch (e: any) {
                   setMessage(friendlyError(e, lang));
                 }
@@ -2668,35 +2948,37 @@ function App() {
             owner={view?.role === "owner"}
             api={api}
             lang={lang}
+            onAccepted={async () => {
+              const list = await api("/patients");
+              setPatients(list);
+            }}
           />
         </Modal>
       )}
     </>
   );
 }
-function download(data: string, name: string, type: string) {
-  const url = URL.createObjectURL(new Blob([data], { type }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
 function Photo({ photos }: { photos: any[] }) {
   const [url, setUrl] = useState("");
+  const id = photos[0]?.id;
   useEffect(() => {
-    let u = "";
-    if (photos[0])
-      db.photos.get(photos[0].id).then((p) => {
-        if (p) {
+    // Clear at once so another medicine's image never lingers, and ignore a
+    // slow read that finishes after the photo or medicine changed.
+    let alive = true,
+      u = "";
+    setUrl("");
+    if (id)
+      db.photos.get(id).then((p) => {
+        if (alive && p) {
           u = URL.createObjectURL(p.blob);
           setUrl(u);
         }
       });
     return () => {
+      alive = false;
       if (u) URL.revokeObjectURL(u);
     };
-  }, [photos[0]?.id]);
+  }, [id]);
   return url ? (
     <a href={url} target="_blank" rel="noreferrer">
       <img className="photo" src={url} alt="Package or label — open to zoom" />
@@ -2741,6 +3023,7 @@ function Modal({
   );
 }
 function MedicineForm({
+  scope,
   t,
   lang,
   medicine,
@@ -2748,6 +3031,7 @@ function MedicineForm({
   all,
   onSave,
 }: {
+  scope: string;
   t: typeof words.en | typeof words.th;
   lang: Language;
   medicine: any;
@@ -2809,7 +3093,12 @@ function MedicineForm({
     );
   useEffect(() => {
     db.drafts.get(medicine.id).then((d) => {
-      if (d && !medicine.proposed && d.value.v === 2) {
+      if (
+        d &&
+        !medicine.proposed &&
+        d.value.v === 2 &&
+        d.value.scope === scope
+      ) {
         setM(d.value.m);
         setR(d.value.r);
         setAmountState(d.value.amount);
@@ -2818,9 +3107,23 @@ function MedicineForm({
         setDays(d.value.days);
         setSomeDays(d.value.days.length < 7);
         if (d.value.file) setFile(d.value.file);
-      }
+      } else touched.current = true;
+      hydrated.current = true;
     });
   }, []);
+  // Autosave shortly after each change, only once any saved draft has loaded
+  // (so an empty new form never overwrites it).
+  const hydrated = useRef(false);
+  const touched = useRef(false);
+  useEffect(() => {
+    if (!hydrated.current) return;
+    if (!touched.current) {
+      touched.current = true;
+      return;
+    }
+    const timer = setTimeout(() => void persist(), 800);
+    return () => clearTimeout(timer);
+  }, [m, r, amount, unit, asNeeded, days, file]);
   useEffect(() => {
     if (!file) return setPreview("");
     const url = URL.createObjectURL(file);
@@ -2831,7 +3134,19 @@ function MedicineForm({
     try {
       await db.drafts.put({
         id: medicine.id,
-        value: { v: 2, m, r, amount, unit, asNeeded, days, file },
+        value: {
+          v: 2,
+          scope,
+          isNew: !editing,
+          savedAt: Date.now(),
+          m,
+          r,
+          amount,
+          unit,
+          asNeeded,
+          days,
+          file,
+        },
       });
     } catch {
       setError(
@@ -3406,11 +3721,13 @@ function Caregivers({
   owner,
   api,
   lang,
+  onAccepted,
 }: {
   patient: string;
   owner: boolean;
   api: typeof window.fetch | any;
   lang: Language;
+  onAccepted: () => Promise<void>;
 }) {
   const [list, setList] = useState<any[]>([]),
     [message, setMessage] = useState("");
@@ -3495,10 +3812,11 @@ function Caregivers({
               token: f.get("token"),
               agreed: f.get("agreed") === "on",
             });
+            await onAccepted();
             setMessage(
               L(
-                "ยอมรับแล้ว ปิดแล้วเปิดแอปใหม่เพื่อเลือกผู้ป่วย",
-                "Accepted. Reopen app to select patient.",
+                "ยอมรับแล้ว เลือกผู้ป่วยได้ที่ด้านบนของหน้าจอ",
+                "Accepted. Choose the patient at the top of the screen.",
               ),
             );
           } catch (e: any) {
