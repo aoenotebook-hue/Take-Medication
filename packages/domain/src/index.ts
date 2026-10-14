@@ -298,6 +298,7 @@ export function reminderPush(
     );
   return {
     ...genericPush(jobId, tag, expiry, language),
+    snooze: repeat,
     detail: {
       title:
         (th ? "ถึงเวลาใช้ยา" : "Medicine time") +

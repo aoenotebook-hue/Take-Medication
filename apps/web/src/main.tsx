@@ -34,6 +34,15 @@ import {
 } from "./format";
 import { preparePhoto } from "./photo";
 import {
+  alertUser,
+  buzz,
+  playChime,
+  setAlertPrefs,
+  soundOn,
+  unlockAudio,
+  vibrateOn,
+} from "./alert";
+import {
   commonMedicines,
   foodOptions,
   formForUnit,
@@ -101,6 +110,16 @@ async function api(path: string, body?: any, method = body ? "POST" : "GET") {
   return r.json();
 }
 let localSequence = Date.now() * 1000;
+// Opened from a reminder: "#notification=<id>" plus an optional quick reply.
+const NOTICE =
+  /^#notification=([a-f0-9-]{36})(?:&do=(taken|snooze10|snooze15))?$/;
+let notice: { id: string; action?: string } | undefined;
+function readNotice() {
+  const m = location.hash.match(NOTICE);
+  if (m) notice = { id: m[1], action: m[2] };
+}
+readNotice();
+unlockAudio();
 // Android/Chrome offer an install prompt; keep it for the install button.
 let installPrompt: any = null;
 const installListeners = new Set<() => void>();
@@ -339,19 +358,28 @@ function App() {
   const syncMessage = useRef("");
   const inFlight = useRef(new Set<string>());
   // Display clock: re-render so due doses unlock and "next" stays current.
-  // It never schedules or sends reminders.
-  const [, setTick] = useState(0);
+  // It never schedules server reminders; it only opens the answer sheet.
+  const [tick, setTick] = useState(0);
   useEffect(() => {
     const timer = setInterval(() => setTick((n) => n + 1), 30000);
     return () => clearInterval(timer);
   }, []);
-  const [freshness, setFreshness] = useState(900);
+  const [snoozeWindow, setSnoozeWindow] = useState(3600);
   const snoozeChoices = (o: any) =>
-    [10, 30].filter(
+    [10, 15].filter(
       (minutes) =>
         Date.now() + minutes * 60000 <
-        Date.parse(o.intended_at) + freshness * 1000,
+        Date.parse(o.intended_at) + snoozeWindow * 1000,
     );
+  // The reminder sheet: big answer buttons for the doses of one reminder.
+  const [alertGroup, setAlertGroup] = useState<{
+    ids: string[];
+    snooze?: boolean;
+    action?: string;
+  }>();
+  const [noticeTick, setNoticeTick] = useState(0);
+  const [alertSound, setAlertSound] = useState(soundOn());
+  const [alertVibrate, setAlertVibrate] = useState(vibrateOn());
   const syncAgain = useRef<string | undefined>(undefined);
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -473,9 +501,7 @@ function App() {
         setLang(snap.profile.data.language);
       setReachable(true);
       setMessage((m) => (m === syncMessage.current ? "" : m));
-      const opaque = location.hash.match(
-        /^#notification=([a-f0-9-]{36})$/,
-      )?.[1];
+      const opaque = location.hash.match(NOTICE)?.[1];
       if (opaque) {
         api("/push/observations", {
           jobId: opaque,
@@ -564,7 +590,10 @@ function App() {
     }
     try {
       api("/push/config")
-        .then((c) => c.freshnessSeconds && setFreshness(c.freshnessSeconds))
+        .then(
+          (c) =>
+            c.snoozeWindowSeconds && setSnoozeWindow(c.snoozeWindowSeconds),
+        )
         .catch(() => {});
       const list = await api("/patients");
       const cachedProfiles = await db.snapshots.toArray();
@@ -581,9 +610,7 @@ function App() {
       setPatients(list);
       if (list.length) {
         let selected = list[0].id;
-        const opaque = location.hash.match(
-          /^#notification=([a-f0-9-]{36})$/,
-        )?.[1];
+        const opaque = location.hash.match(NOTICE)?.[1];
         if (opaque) {
           try {
             const resolved = await api("/push/resolve/" + opaque);
@@ -846,6 +873,139 @@ function App() {
           r.medication_id === med && Date.parse(r.effective_at) <= Date.now(),
       )
       .at(-1);
+  const doseStatus = (o: any) =>
+    projectDose(view?.events.filter((e) => e.occurrence_id === o.id) || [])
+      .status;
+  // Doses of the latest reminder time that are due now and not yet answered.
+  const dueGroup = () => {
+    const now = Date.now();
+    const due = (view?.occurrences || []).filter(
+      (o) =>
+        o.valid &&
+        Date.parse(o.intended_at) <= now + 120000 &&
+        Date.parse(o.intended_at) > now - snoozeWindow * 1000 &&
+        doseStatus(o) === "unconfirmed",
+    );
+    const latest = due
+      .map((o) => o.intended_at)
+      .sort()
+      .at(-1);
+    return due.filter((o) => o.intended_at === latest).map((o) => o.id);
+  };
+  const announced = (key: string) => {
+    try {
+      // Kept on this phone so a dose rings in the app only once.
+      const seen = JSON.parse(localStorage.getItem("announced") || "[]");
+      if (seen.includes(key)) return true;
+      localStorage.setItem(
+        "announced",
+        JSON.stringify([...seen, key].slice(-50)),
+      );
+    } catch {
+      /* private mode: may announce twice */
+    }
+    return false;
+  };
+  function openAlert(
+    ids: string[],
+    extra: { snooze?: boolean; action?: string } = {},
+  ) {
+    const first = view?.occurrences.find((o) => ids.includes(o.id));
+    if (first) announced(patient + ":" + first.intended_at);
+    setAlertGroup({ ids, ...extra });
+  }
+  async function snooze(o: any, minutes: number) {
+    await queue("snooze", o.id, 0, { occurrenceId: o.id, minutes });
+    setMessage(
+      L(
+        `⏰ จะเตือนอีกครั้งใน ${minutes} นาที`,
+        `⏰ We will remind you again in ${minutes} minutes`,
+      ),
+    );
+  }
+  // A reminder arrived while the app is open: ring, vibrate and show the sheet.
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      if (e.data?.type !== "reminder" || typeof e.data.id !== "string") return;
+      alertUser(e.data.snooze ? "snooze" : "reminder");
+      notice = { id: e.data.id };
+      setNoticeTick((n) => n + 1);
+    };
+    const onHash = () => {
+      readNotice();
+      setNoticeTick((n) => n + 1);
+    };
+    navigator.serviceWorker?.addEventListener("message", onMessage);
+    window.addEventListener("hashchange", onHash);
+    return () => {
+      navigator.serviceWorker?.removeEventListener("message", onMessage);
+      window.removeEventListener("hashchange", onHash);
+    };
+  }, []);
+  // Opened from a reminder (or its quick-reply button): show that reminder.
+  useEffect(() => {
+    if (!notice || !view || !token || !patient) return;
+    const n = notice;
+    notice = undefined;
+    api("/push/resolve/" + n.id)
+      .then((r) => {
+        if (r.patientId !== patientRef.current) {
+          if (!patients.some((p) => p.id === r.patientId)) return;
+          notice = n;
+          setS(undefined);
+          patientRef.current = r.patientId;
+          setPatient(r.patientId);
+          loadLocal(r.patientId).then(() => sync(r.patientId));
+          return;
+        }
+        if (r.occurrenceIds?.length)
+          openAlert(r.occurrenceIds, { snooze: r.snooze, action: n.action });
+      })
+      .catch(() => {
+        // Offline: answer the latest due reminder saved on this phone.
+        const ids = dueGroup();
+        if (ids.length) openAlert(ids, { action: n.action });
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noticeTick, Boolean(view), patient]);
+  // The app is open when a dose becomes due: ring and show the sheet once.
+  useEffect(() => {
+    if (!view || alertGroup || document.visibilityState !== "visible") return;
+    const ids = dueGroup().filter((id) => {
+      const o = view.occurrences.find((x) => x.id === id);
+      return o && Date.parse(o.intended_at) > Date.now() - 600000;
+    });
+    if (!ids.length) return;
+    const first = view.occurrences.find((o) => o.id === ids[0]);
+    if (announced(patient + ":" + first.intended_at)) return;
+    alertUser("reminder");
+    setAlertGroup({ ids });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tick, Boolean(view), patient]);
+  // A quick reply from the notification: record it once the data is ready.
+  useEffect(() => {
+    const g = alertGroup;
+    if (!g?.action || !view) return;
+    setAlertGroup({ ...g, action: undefined });
+    const open = g.ids
+      .map((id) => view.occurrences.find((o) => o.id === id))
+      .filter((o) => o && o.valid && doseStatus(o) === "unconfirmed");
+    if (!open.length) return;
+    (async () => {
+      if (g.action === "taken") {
+        for (const o of open) await dose(o, "taken");
+        setMessage(L("✓ บันทึกว่าได้รับยาแล้ว", "✓ Recorded as taken"));
+        setAlertGroup(undefined);
+      } else {
+        const minutes = g.action === "snooze15" ? 15 : 10;
+        if (snoozeChoices(open[0]).includes(minutes)) {
+          await snooze(open[0], minutes);
+          setAlertGroup(undefined);
+        }
+      }
+    })().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alertGroup, Boolean(view)]);
   async function dose(o: any, action: string) {
     // One recorded action per tap: ignore repeats while the first is saving.
     if (inFlight.current.has(o.id)) return;
@@ -1495,10 +1655,7 @@ function App() {
                               key={minutes}
                               onClick={async () => {
                                 setSnoozing("");
-                                await queue("snooze", o.id, 0, {
-                                  occurrenceId: o.id,
-                                  minutes,
-                                });
+                                await snooze(o, minutes);
                               }}
                             >
                               {minutes} {t.minutes}
@@ -2290,6 +2447,57 @@ function App() {
               <button className="primary" onClick={reminders}>
                 {t.enable}
               </button>
+              <h4>{L("เสียงและการสั่น", "Sound and vibration")}</h4>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={alertSound}
+                  onChange={(e) => {
+                    setAlertSound(e.target.checked);
+                    setAlertPrefs(e.target.checked, alertVibrate);
+                  }}
+                />
+                {L(
+                  "เล่นเสียงเตือนเฉพาะของแอป",
+                  "Play the app's own reminder sound",
+                )}
+              </label>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={alertVibrate}
+                  onChange={(e) => {
+                    setAlertVibrate(e.target.checked);
+                    setAlertPrefs(alertSound, e.target.checked);
+                  }}
+                />
+                {L("สั่นเมื่อเตือน", "Vibrate with reminders")}
+              </label>
+              <div className="actions">
+                <button
+                  onClick={() => {
+                    playChime("reminder", true);
+                    buzz("reminder", true);
+                  }}
+                >
+                  🔔 {L("ฟังเสียงเตือน", "Hear reminder sound")}
+                </button>
+                <button
+                  onClick={() => {
+                    playChime("snooze", true);
+                    buzz("snooze", true);
+                  }}
+                >
+                  ⏰ {L("ฟังเสียงเตือนซ้ำ", "Hear repeat sound")}
+                </button>
+              </div>
+              <p className="hint">
+                {L(
+                  "เสียงเฉพาะของแอปจะดังเมื่อเปิดแอปอยู่ เมื่อปิดแอป โทรศัพท์จะใช้เสียงแจ้งเตือนของเครื่อง บน iPhone ตั้งเสียงและการสั่นได้ที่ การตั้งค่า → การแจ้งเตือน → ยาของฉัน (iPhone ไม่ให้เว็บแอปสั่นเองหรือมีปุ่มตอบบนการแจ้งเตือน แตะการแจ้งเตือนเพื่อเปิดปุ่มตอบขนาดใหญ่)",
+                  "The app's own sound plays while the app is open. When it is closed, the phone uses its notification sound. On iPhone, set sound and vibration in Settings → Notifications → My Medicine (iPhone does not let web apps vibrate or show answer buttons on the notification; tap the notification to open the large answer buttons).",
+                )}
+              </p>
+              <h4>{L("ความเป็นส่วนตัวของการแจ้งเตือน", "Reminder privacy")}</h4>
               <label className="check">
                 <input
                   type="checkbox"
@@ -2767,6 +2975,131 @@ function App() {
           </button>
         ))}
       </nav>
+      {alertGroup &&
+        view &&
+        (() => {
+          const items = alertGroup.ids
+            .map((id) => view.occurrences.find((o) => o.id === id))
+            .filter((o) => o && o.valid);
+          if (!items.length) return null;
+          const first = items[0];
+          const period = periodOf(first.local_time);
+          const open = items.filter((o) => doseStatus(o) === "unconfirmed");
+          const locked = view.role === "viewer";
+          const close = () => setAlertGroup(undefined);
+          const answerAll = async (action: "taken" | "skipped") => {
+            for (const o of open) await dose(o, action);
+            setMessage(
+              action === "taken"
+                ? L("✓ บันทึกว่าได้รับยาแล้ว", "✓ Recorded as taken")
+                : L("บันทึกว่าข้ามมื้อนี้แล้ว", "Recorded as skipped"),
+            );
+            close();
+          };
+          return (
+            <Modal
+              title={
+                (alertGroup.snooze
+                  ? L("⏰ เตือนอีกครั้ง", "⏰ Reminder again")
+                  : L("⏰ ถึงเวลาใช้ยา", "⏰ Medicine time")) +
+                (patients.length > 1
+                  ? " · " + view.profile.data.displayName
+                  : "")
+              }
+              closeLabel={L("ปิด", "Close")}
+              close={close}
+            >
+              <div className={"alert-sheet period-" + period}>
+                <p className="alert-when">
+                  <span aria-hidden>{mealIcons[period]} </span>
+                  {mealNames[lang][period]} <small>{first.local_time}</small>
+                </p>
+                {items.map((o) => {
+                  const m = view.medications.find(
+                    (m) => m.id === o.medication_id,
+                  );
+                  const st = doseStatus(o);
+                  return (
+                    <div key={o.id} className="alert-item">
+                      <div>
+                        <span className="dose-name">
+                          <strong>
+                            {m?.data.name}
+                            {m?.data.strength ? " " + m.data.strength : ""}
+                          </strong>
+                          {m && <Speak text={m.data.name} lang={lang} />}
+                        </span>
+                        <span className="dose-what">
+                          {o.data.amount} {o.data.unit}
+                          {current(o.medication_id)?.data.food
+                            ? " · " + current(o.medication_id)?.data.food
+                            : ""}
+                        </span>
+                      </div>
+                      {st === "unconfirmed" ? (
+                        open.length > 1 && (
+                          <button
+                            disabled={locked}
+                            onClick={() => dose(o, "taken")}
+                            aria-label={
+                              L("ได้รับยาแล้ว ", "Taken ") +
+                              (m?.data.name || "")
+                            }
+                          >
+                            ✓
+                          </button>
+                        )
+                      ) : (
+                        <span className={"done-badge " + st}>
+                          {st === "taken" ? "✓ " : "– "}
+                          {statusLabel(st, lang)}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+                {open.length > 0 ? (
+                  <div className="alert-actions">
+                    <button
+                      className="primary huge"
+                      disabled={locked}
+                      onClick={() => answerAll("taken")}
+                    >
+                      ✓ {t.takenStatus}
+                      {open.length > 1 ? L(" ทั้งหมด", " (all)") : ""}
+                    </button>
+                    {snoozeChoices(first).map((minutes) => (
+                      <button
+                        key={minutes}
+                        className="huge snooze-button"
+                        disabled={locked}
+                        onClick={async () => {
+                          await snooze(open[0], minutes);
+                          close();
+                        }}
+                      >
+                        ⏰{" "}
+                        {L(
+                          `เตือนอีก ${minutes} นาที`,
+                          `Remind me in ${minutes} min`,
+                        )}
+                      </button>
+                    ))}
+                    <button
+                      className="link-button"
+                      disabled={locked}
+                      onClick={() => answerAll("skipped")}
+                    >
+                      {L("ข้ามมื้อนี้", "Skip this time")}
+                    </button>
+                  </div>
+                ) : (
+                  <p className="success">✓ {L("ตอบครบแล้ว", "All answered")}</p>
+                )}
+              </div>
+            </Modal>
+          );
+        })()}
       {editing && view && (
         <Modal
           title={

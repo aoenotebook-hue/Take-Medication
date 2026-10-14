@@ -1064,3 +1064,51 @@ p.sync {
   color: inherit;
   opacity: 0.85;
 }
+/* Reminder answer sheet: few, big choices */
+.alert-sheet {
+  background: var(--period-bg);
+  border-left: 8px solid var(--period-line);
+  border-radius: 16px;
+  padding: 0.6rem 0.9rem 0.9rem;
+}
+.alert-when {
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: var(--period-text);
+  margin: 0.2rem 0 0.6rem;
+}
+.alert-when small {
+  font-size: 1rem;
+  font-weight: 500;
+}
+.alert-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
+  background: white;
+  border-radius: 12px;
+  padding: 0.5rem 0.8rem;
+  margin: 0.4rem 0;
+}
+.alert-item > div {
+  display: grid;
+}
+.alert-item strong {
+  font-size: 1.2rem;
+}
+.alert-actions {
+  display: grid;
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+}
+.huge {
+  min-height: 72px;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+.snooze-button {
+  background: white;
+  border: 2px solid var(--period-line);
+  color: var(--period-text);
+}

@@ -12,6 +12,7 @@ import {
   audit,
   snapshot,
   HttpError,
+  snoozeWindowSeconds,
 } from "./service.js";
 import { authenticate, demoEnabled, demoToken, supabase } from "./auth.js";
 import { seal } from "./secrets.js";
@@ -516,6 +517,7 @@ app.get("/api/push/config", (_req, res) =>
     publicKey: process.env.VAPID_PUBLIC_KEY || null,
     adapter: process.env.PUSH_ADAPTER || "webpush",
     freshnessSeconds: Number(process.env.REMINDER_FRESHNESS_SECONDS || 900),
+    snoozeWindowSeconds: snoozeWindowSeconds(),
   }),
 );
 app.post(
@@ -551,14 +553,18 @@ app.get("/api/push/resolve/:id", async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
   const job = (
     await pool.query(
-      "SELECT j.patient_id FROM reminder_jobs j JOIN push_subscriptions s ON s.id=j.subscription_id JOIN devices d ON d.id=s.device_id WHERE j.id=$1 AND d.user_id=$2 AND d.revoked_at IS NULL",
+      "SELECT j.patient_id,j.occurrence_ids,j.kind FROM reminder_jobs j JOIN push_subscriptions s ON s.id=j.subscription_id JOIN devices d ON d.id=s.device_id WHERE j.id=$1 AND d.user_id=$2 AND d.revoked_at IS NULL",
       [id, res.locals.user.id],
     )
   ).rows[0];
   if (!job)
     throw new HttpError(403, "Notification unavailable for this account");
   await authorize(pool, res.locals.user.id, job.patient_id);
-  res.json({ patientId: job.patient_id });
+  res.json({
+    patientId: job.patient_id,
+    occurrenceIds: job.occurrence_ids,
+    snooze: String(job.kind).startsWith("snooze"),
+  });
 });
 app.post("/api/push/observations", async (req, res) => {
   const d = z
