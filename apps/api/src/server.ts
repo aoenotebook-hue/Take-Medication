@@ -2,7 +2,12 @@ import "dotenv/config";
 import express from "express";
 import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
-import { randomUUID, randomBytes, createHash } from "node:crypto";
+import {
+  randomUUID,
+  randomBytes,
+  createHash,
+  timingSafeEqual,
+} from "node:crypto";
 import sharp from "sharp";
 import { z } from "zod";
 import { pool, transaction } from "../../../db/client.js";
@@ -198,12 +203,48 @@ app.post("/api/auth/pin/register", pinLimiter, async (req, res) => {
   checkNewPin(pin);
   const existing = (
     await pool.query(
-      "SELECT user_id,pin_hash FROM pin_credentials WHERE phone=$1",
+      "SELECT user_id,pin_hash,updated_at FROM pin_credentials WHERE phone=$1",
       [phone],
     )
   ).rows[0];
-  if (existing?.pin_hash)
+  // An existing account gets a new PIN only with the one-time reset code an
+  // administrator gave the owner; otherwise whoever registered the number
+  // first after a reset would take over the account.
+  const reset: string | undefined = existing?.pin_hash?.startsWith("reset:")
+    ? existing.pin_hash
+    : undefined;
+  if (existing?.pin_hash && !reset)
     throw new HttpError(409, "This phone number is already registered");
+  if (existing && !reset)
+    throw new HttpError(409, "Ask the administrator for a reset code", {
+      resetCodeRequired: true,
+    });
+  if (reset) {
+    const given = createHash("sha256")
+      .update(
+        String(req.body?.resetCode ?? "")
+          .trim()
+          .toUpperCase(),
+      )
+      .digest("hex");
+    const expected = reset.slice("reset:".length);
+    const fresh =
+      Date.now() - new Date(existing.updated_at).getTime() < 86400000;
+    if (
+      !fresh ||
+      expected.length !== given.length ||
+      !timingSafeEqual(Buffer.from(given), Buffer.from(expected))
+    ) {
+      // Five wrong codes cancel the reset; the administrator issues a new one.
+      await pool.query(
+        "UPDATE pin_credentials SET failed_attempts=failed_attempts+1,pin_hash=CASE WHEN failed_attempts+1>=5 THEN NULL ELSE pin_hash END WHERE phone=$1 AND pin_hash=$2",
+        [phone, reset],
+      );
+      throw new HttpError(401, "Wrong or expired reset code", {
+        resetCodeRequired: true,
+      });
+    }
+  }
   let userId: string | undefined = existing?.user_id;
   if (!userId) {
     const create = () =>
@@ -242,8 +283,8 @@ app.post("/api/auth/pin/register", pinLimiter, async (req, res) => {
       "This number's old account is still being deleted; try again later",
     );
   const saved = await pool.query(
-    "INSERT INTO pin_credentials(phone,user_id,pin_hash) VALUES($1,$2,$3) ON CONFLICT(phone) DO UPDATE SET pin_hash=excluded.pin_hash,failed_attempts=0,lock_count=0,locked_until=NULL,updated_at=now() WHERE pin_credentials.pin_hash IS NULL",
-    [phone, userId, await hashPin(phone, pin)],
+    "INSERT INTO pin_credentials(phone,user_id,pin_hash) VALUES($1,$2,$3) ON CONFLICT(phone) DO UPDATE SET pin_hash=excluded.pin_hash,failed_attempts=0,lock_count=0,locked_until=NULL,updated_at=now() WHERE pin_credentials.pin_hash=$4",
+    [phone, userId, await hashPin(phone, pin), reset ?? ""],
   );
   if (!saved.rowCount)
     throw new HttpError(409, "This phone number is already registered");
@@ -274,12 +315,12 @@ app.use("/api", async (req, res, next) => {
     const user = await authenticate(token);
     // Only phone + PIN accounts may use the API. The public Supabase key could
     // otherwise create accounts directly and bypass PIN lockout; an
-    // administrator PIN reset (pin_hash NULL) also ends existing sessions.
+    // administrator PIN reset (no scrypt hash) also ends existing sessions.
     if (
       !demoEnabled() &&
       !(
         await pool.query(
-          "SELECT 1 FROM pin_credentials WHERE user_id=$1 AND pin_hash IS NOT NULL",
+          "SELECT 1 FROM pin_credentials WHERE user_id=$1 AND pin_hash LIKE 'scrypt$%'",
           [user.id],
         )
       ).rowCount

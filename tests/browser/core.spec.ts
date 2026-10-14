@@ -379,7 +379,7 @@ test("settings tab, language toggle, back from pop-ups and name voice button", a
 test("a dose that becomes due rings and opens big answer buttons with 10/15-minute snooze", async ({
   page,
 }) => {
-  test.setTimeout(90000);
+  test.setTimeout(150000);
   await page.addInitScript(() => {
     (window as any).tones = 0;
     (window as any).buzzes = [];
@@ -428,8 +428,23 @@ test("a dose that becomes due rings and opens big answer buttons with 10/15-minu
   expect(await page.evaluate(() => (window as any).buzzes)).toEqual([
     [500, 200, 500, 200, 900],
   ]);
-  await sheet.getByRole("button", { name: "⏰ เตือนอีก 15 นาที" }).click();
+  await sheet.getByRole("button", { name: "ปิด", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
+  // A link someone sends cannot answer for the user, even with a due dose.
+  await page.evaluate(() => {
+    location.hash =
+      "#notification=00000000-0000-4000-8000-000000000000&do=taken";
+  });
+  await page.waitForTimeout(2000);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  const doseRow = page.locator(".dose-row", { hasText: name });
+  await expect(
+    doseRow.getByRole("button", { name: /ได้รับยาแล้ว/ }),
+  ).toBeVisible({ timeout: 70000 });
+  // The row's "remind later" offers the same 10 / 15 minutes.
+  await doseRow.getByRole("button", { name: "เตือนภายหลัง" }).click();
+  await expect(doseRow.getByRole("button", { name: "10 นาที" })).toBeVisible();
+  await doseRow.getByRole("button", { name: "15 นาที" }).click();
   await expect(page.getByText("จะเตือนอีกครั้งใน 15 นาที")).toBeVisible();
   await syncNow(page);
   // Remove the test medicine so its due dose does not ring in other tests.
