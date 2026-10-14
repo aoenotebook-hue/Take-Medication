@@ -249,6 +249,67 @@ export function projectDose(events: DoseEvent[]) {
     heads: heads.map((e) => e.id),
   };
 }
+export type DayPeriod = "morning" | "noon" | "evening" | "bedtime";
+/** Part of the day a clock time falls in; shared by screens and notifications. */
+export function periodOf(time: string): DayPeriod {
+  const h = Number(time.slice(0, 2));
+  if (h >= 4 && h < 11) return "morning";
+  if (h >= 11 && h < 16) return "noon";
+  if (h >= 16 && h < 20) return "evening";
+  return "bedtime";
+}
+export const periodNames: Record<"th" | "en", Record<DayPeriod, string>> = {
+  th: { morning: "เช้า", noon: "กลางวัน", evening: "เย็น", bedtime: "ก่อนนอน" },
+  en: {
+    morning: "Morning",
+    noon: "Noon",
+    evening: "Evening",
+    bedtime: "Bedtime",
+  },
+};
+const clip = (v: unknown, n: number) => String(v ?? "").slice(0, n);
+/**
+ * Reminder that names the medicines due and the time. The phone can still hide
+ * the names (Settings), and falls back to a neutral text when it is stale.
+ */
+export function reminderPush(
+  jobId: string,
+  tag: string,
+  expiry: string,
+  language: string,
+  time: string,
+  items: { name: string; strength?: string; amount?: string; unit?: string }[],
+  repeat = false,
+) {
+  const th = language !== "en";
+  const names = periodNames[th ? "th" : "en"];
+  const shown = items.slice(0, 8);
+  const lines = shown.map(
+    (i) =>
+      "• " +
+      [clip(i.name, 80), clip(i.strength, 40)].filter(Boolean).join(" ") +
+      (i.amount ? " — " + clip(i.amount, 12) + " " + clip(i.unit, 20) : ""),
+  );
+  if (items.length > shown.length)
+    lines.push(
+      th
+        ? `และอีก ${items.length - shown.length} รายการ`
+        : `and ${items.length - shown.length} more`,
+    );
+  return {
+    ...genericPush(jobId, tag, expiry, language),
+    detail: {
+      title:
+        (th ? "ถึงเวลาใช้ยา" : "Medicine time") +
+        (repeat ? (th ? " (เตือนอีกครั้ง)" : " (reminder)") : "") +
+        " · " +
+        names[periodOf(time)] +
+        " " +
+        clip(time, 5),
+      body: lines.join("\n"),
+    },
+  };
+}
 export function genericPush(
   jobId: string,
   tag: string,

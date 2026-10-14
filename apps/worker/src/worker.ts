@@ -1,7 +1,11 @@
 import { randomUUID, createHash } from "node:crypto";
 import { pool, transaction } from "../../../db/client.js";
 import { regenerate } from "../../api/src/service.js";
-import { genericPush, projectDose } from "../../../packages/domain/src/index.js";
+import {
+  genericPush,
+  projectDose,
+  reminderPush,
+} from "../../../packages/domain/src/index.js";
 import { unseal } from "../../api/src/secrets.js";
 import { sendPush } from "./push.js";
 export async function refreshHorizon() {
@@ -104,6 +108,7 @@ export async function dispatchOne(
     let valid = Boolean(
       sub && !sub.disabled_at && !sub.revoked_at && sub.enabled,
     );
+    let due: any[] = [];
     if (job.kind !== "test") {
       const occurrences = (
         await c.query(
@@ -121,13 +126,12 @@ export async function dispatchOne(
           [job.occurrence_ids],
         )
       ).rows;
-      valid =
-        valid &&
-        occurrences.some(
-          (o) =>
-            projectDose(events.filter((e) => e.occurrence_id === o.id))
-              .status === "unconfirmed",
-        );
+      due = occurrences.filter(
+        (o) =>
+          projectDose(events.filter((e) => e.occurrence_id === o.id)).status ===
+          "unconfirmed",
+      );
+      valid = valid && due.length > 0;
     }
     const remaining = Math.floor(
       (job.expires_at.getTime() - Date.now()) / 1000,
@@ -144,16 +148,48 @@ export async function dispatchOne(
       .digest("hex")
       .slice(0, 32);
     try {
-      const r = await sender(
-        unseal(sub.data),
-        genericPush(
-          job.id,
-          tag,
-          job.expires_at.toISOString(),
-          sub.profile.language,
-        ),
-        remaining,
+      let payload: any = genericPush(
+        job.id,
+        tag,
+        job.expires_at.toISOString(),
+        sub.profile.language,
       );
+      if (due.length) {
+        // Name only the medicines still due; the push is end-to-end encrypted.
+        const meds = (
+          await c.query(
+            "SELECT id,data FROM medications WHERE id=ANY($1::uuid[]) AND deleted_at IS NULL",
+            [due.map((o) => o.medication_id)],
+          )
+        ).rows;
+        const items = due
+          .map((o) => {
+            const m = meds.find((x) => x.id === o.medication_id);
+            return m
+              ? {
+                  name: m.data.name,
+                  strength: m.data.strength,
+                  amount: o.data?.amount,
+                  unit: o.data?.unit,
+                }
+              : undefined;
+          })
+          .filter(Boolean) as any[];
+        items.sort((a, b) =>
+          a.name.localeCompare(b.name, undefined, { numeric: true }),
+        );
+        if (items.length)
+          payload = reminderPush(
+            job.id,
+            tag,
+            job.expires_at.toISOString(),
+            sub.profile.language,
+            due[0].local_time,
+            items,
+            String(job.kind).startsWith("snooze"),
+          );
+      }
+      const r = await sender(unseal(sub.data), payload, remaining);
       await c.query(
         "INSERT INTO push_attempts(job_id,state,status_code) VALUES($1,$2,$3)",
         [job.id, (r as any).simulated ? "simulated" : "accepted", r.statusCode],

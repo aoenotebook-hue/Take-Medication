@@ -11,7 +11,7 @@ import {
   weekdaysText,
   when,
 } from "./format";
-import { mealNames, mealOf } from "./autofill";
+import { mealNames, periodOf } from "./autofill";
 let fontPromise: Promise<string> | undefined;
 export async function font() {
   fontPromise ||= (async () => {
@@ -49,6 +49,9 @@ export type SummaryItem = {
   title: string;
   how: string;
   times: string;
+  /** Each dose time with its part of the day, for colour-coded labels. */
+  slots: { time: string; amount: string; unit: string }[];
+  weekdays: string;
   extra: string[];
   flags: string[];
 };
@@ -96,9 +99,9 @@ export function describe(
   const times = slots.length
     ? slots
         .map((x) => {
-          const meal = mealOf(x.time);
           return (
-            (meal ? mealNames[lang][meal] + " " : "") +
+            mealNames[lang][periodOf(x.time)] +
+            " " +
             x.time +
             (sameAmount ? "" : ` (${x.amount} ${x.unit})`)
           );
@@ -150,6 +153,15 @@ export function describe(
     title: m.data.name + (m.data.strength ? " " + m.data.strength : ""),
     how,
     times,
+    slots: slots.map((x) => ({
+      time: x.time,
+      amount: sameAmount ? "" : x.amount,
+      unit: sameAmount ? "" : x.unit,
+    })),
+    weekdays:
+      slots.length && (slots[0].weekdays || [1, 2, 3, 4, 5, 6, 7]).length < 7
+        ? weekdaysText(slots[0].weekdays, lang)
+        : "",
     extra,
     flags,
   };

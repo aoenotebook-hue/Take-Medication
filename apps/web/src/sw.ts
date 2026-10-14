@@ -34,18 +34,36 @@ self.addEventListener("push", (e) => {
         !valid ||
         !Number.isFinite(Date.parse(p.expiresAt)) ||
         Date.parse(p.expiresAt) < Date.now();
+      // The patient can choose to keep medicine names off the lock screen.
+      const hidden = Boolean(
+        await caches
+          .open("prefs")
+          .then((c) => c.match("/__prefs/hide-names"))
+          .catch(() => undefined),
+      );
+      const detail =
+        !stale &&
+        !hidden &&
+        typeof p.detail?.title === "string" &&
+        typeof p.detail?.body === "string"
+          ? p.detail
+          : undefined;
       await self.registration.showNotification(
         stale
-          ? "แจ้งเตือนยา / Medication reminder"
-          : p.title !== "แจ้งเตือนยา"
-            ? "Medication reminder"
-            : "แจ้งเตือนยา",
+          ? "ยาของฉัน · แจ้งเตือนยา / Medication reminder"
+          : detail
+            ? detail.title.slice(0, 120)
+            : p.title !== "แจ้งเตือนยา"
+              ? "Medication reminder"
+              : "แจ้งเตือนยา",
         {
           body: stale
             ? "เปิดแอปเพื่อตรวจสอบรายการยาปัจจุบัน / Open to review your current medicines"
-            : p.title === "แจ้งเตือนยา"
-              ? "เปิดแอปเพื่อตรวจสอบรายการยา"
-              : "Open to review your current medication schedule",
+            : detail
+              ? detail.body.slice(0, 1000)
+              : p.title === "แจ้งเตือนยา"
+                ? "เปิดแอปเพื่อตรวจสอบรายการยา"
+                : "Open to review your current medication schedule",
           tag: valid ? p.tag : "medication-neutral",
           icon: "/icon-192.png",
           data: { path: valid ? "/#notification=" + p.id : "/" },

@@ -2,6 +2,16 @@ import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import sharp from "sharp";
 import { randomBytes } from "node:crypto";
+import type { Page } from "@playwright/test";
+// Sync now lives on the Settings tab; come back to the tab the test was on.
+async function syncNow(page: Page, back = "รายการยา") {
+  await page.getByRole("button", { name: "การตั้งค่า", exact: true }).click();
+  await page.getByRole("button", { name: /ซิงค์ข้อมูลตอนนี้/ }).click();
+  await expect(
+    page.getByText("เซิร์ฟเวอร์รับข้อมูลทั้งหมดแล้ว", { exact: false }).first(),
+  ).toBeVisible();
+  await page.getByRole("button", { name: back, exact: true }).click();
+}
 test("Thai navigation, offline cold open, privacy clearing and accessibility", async ({
   page,
   context,
@@ -25,9 +35,9 @@ test("Thai navigation, offline cold open, privacy clearing and accessibility", a
   await expect(
     page.getByText("ผู้ป่วยตัวอย่าง / Demo patient").first(),
   ).toBeVisible();
-  await page.getByRole("button", { name: "ยาของฉัน", exact: true }).click();
+  await page.getByRole("button", { name: "รายการยา", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "ยาของฉัน", exact: true }),
+    page.getByRole("heading", { name: "รายการยา", exact: true }),
   ).toBeVisible();
   await context.setOffline(false);
   await page.getByRole("button", { name: "การตั้งค่า", exact: true }).click();
@@ -61,7 +71,7 @@ test("large camera photo is compressed offline and uploaded within the hosting l
   expect(photo.length).toBeLessThan(8 * 1024 * 1024);
   await page.goto("/");
   await page.getByRole("button", { name: "ทดลองด้วยข้อมูลสมมติ" }).click();
-  await page.getByRole("button", { name: "ยาของฉัน", exact: true }).click();
+  await page.getByRole("button", { name: "รายการยา", exact: true }).click();
   await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
   await context.setOffline(true);
   await page.getByRole("button", { name: "เพิ่มยา" }).click();
@@ -106,11 +116,8 @@ test("large camera photo is compressed offline and uploaded within the hosting l
       r.request().method() === "POST",
   );
   await context.setOffline(false);
-  await page.getByRole("button", { name: "ลองซิงค์อีกครั้ง" }).click();
+  await syncNow(page);
   expect((await uploaded).status()).toBe(200);
-  await expect(
-    page.getByText("เซิร์ฟเวอร์รับข้อมูลทั้งหมดแล้ว", { exact: false }),
-  ).toBeVisible();
 });
 test("guided manual draft without photos and 200% layout", async ({
   page,
@@ -124,7 +131,7 @@ test("guided manual draft without photos and 200% layout", async ({
   });
   await page.goto("/");
   await page.getByRole("button", { name: "ทดลองด้วยข้อมูลสมมติ" }).click();
-  await page.getByRole("button", { name: "ยาของฉัน", exact: true }).click();
+  await page.getByRole("button", { name: "รายการยา", exact: true }).click();
   await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
   await context.setOffline(true);
   await page.getByRole("button", { name: "เพิ่มยา" }).click();
@@ -144,10 +151,7 @@ test("guided manual draft without photos and 200% layout", async ({
     ),
   ).toBeVisible();
   await context.setOffline(false);
-  await page.getByRole("button", { name: "ลองซิงค์อีกครั้ง" }).click();
-  await expect(
-    page.getByText("เซิร์ฟเวอร์รับข้อมูลทั้งหมดแล้ว", { exact: false }),
-  ).toBeVisible();
+  await syncNow(page);
   expect(
     batches.some(
       (b) =>
@@ -177,7 +181,7 @@ test("one-page entry fills chips from label wording and saves an active medicine
   const name = "Synthetic label " + Date.now();
   await page.goto("/");
   await page.getByRole("button", { name: "ทดลองด้วยข้อมูลสมมติ" }).click();
-  await page.getByRole("button", { name: "ยาของฉัน", exact: true }).click();
+  await page.getByRole("button", { name: "รายการยา", exact: true }).click();
   await page.getByRole("button", { name: "เพิ่มยา" }).click();
   await page.getByLabel("ชื่อยา", { exact: true }).fill(name);
   await page
@@ -196,14 +200,11 @@ test("one-page entry fills chips from label wording and saves an active medicine
   await dialog.getByLabel("ข้อมูลนี้ตรงกับใบสั่งยา").check();
   await dialog.getByRole("button", { name: /^✓ บันทึก$/ }).click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
-  await page.getByRole("button", { name: "ลองซิงค์อีกครั้ง" }).click();
-  await expect(
-    page.getByText("เซิร์ฟเวอร์รับข้อมูลทั้งหมดแล้ว", { exact: false }),
-  ).toBeVisible();
+  await syncNow(page);
   const card = page.locator("article", { hasText: name });
-  await expect(
-    card.getByText(/เช้า 08:00 · เย็น 18:00 · ทุกวัน/),
-  ).toBeVisible();
+  // Dose times show as colour-coded parts of the day, not clock times.
+  await expect(card.locator(".period-morning")).toHaveText(/เช้า/);
+  await expect(card.locator(".period-evening")).toHaveText(/เย็น/);
   await expect(card.getByText(/ครั้งละ 1 เม็ด · หลังอาหาร/)).toBeVisible();
   // Editing keeps the one-page form filled and records a reason automatically.
   await card.getByRole("button", { name: /เปิดข้อมูลยา/ }).click();
@@ -214,11 +215,8 @@ test("one-page entry fills chips from label wording and saves an active medicine
   await edit.getByLabel("ข้อมูลนี้ตรงกับใบสั่งยา").check();
   await edit.getByRole("button", { name: /^✓ บันทึก$/ }).click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
-  await page.getByRole("button", { name: "ลองซิงค์อีกครั้ง" }).click();
-  await expect(
-    page.getByText("เซิร์ฟเวอร์รับข้อมูลทั้งหมดแล้ว", { exact: false }),
-  ).toBeVisible();
-  await expect(card.getByText(/กลางวัน 12:00/)).toBeVisible();
+  await syncNow(page);
+  await expect(card.locator(".period-noon")).toHaveText(/กลางวัน/);
 });
 test("row edit and delete buttons, daily schedule view, and clear all data", async ({
   page,
@@ -227,7 +225,7 @@ test("row edit and delete buttons, daily schedule view, and clear all data", asy
   const stamp = Date.now();
   await page.goto("/");
   await page.getByRole("button", { name: "ทดลองด้วยข้อมูลสมมติ" }).click();
-  await page.getByRole("button", { name: "ยาของฉัน", exact: true }).click();
+  await page.getByRole("button", { name: "รายการยา", exact: true }).click();
   for (const [name, meal] of [
     ["Synthetic keep " + stamp, "เช้า"],
     ["Synthetic mistake " + stamp, "ก่อนนอน"],
@@ -242,17 +240,14 @@ test("row edit and delete buttons, daily schedule view, and clear all data", asy
     await form.getByRole("button", { name: /^✓ บันทึก$/ }).click();
     await expect(page.getByRole("dialog")).not.toBeVisible();
   }
-  await page.getByRole("button", { name: "ลองซิงค์อีกครั้ง" }).click();
-  await expect(
-    page.getByText("เซิร์ฟเวอร์รับข้อมูลทั้งหมดแล้ว", { exact: false }),
-  ).toBeVisible();
-  // Daily schedule groups medicines by clock time.
+  await syncNow(page);
+  // Daily schedule groups medicines by part of the day.
   await page.getByRole("button", { name: "ตารางเวลาแต่ละวัน" }).click();
   await expect(
-    page.getByRole("heading", { name: /08:00 · เช้า/ }),
+    page.getByRole("heading", { name: "เช้า", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: /21:00 · ก่อนนอน/ }),
+    page.getByRole("heading", { name: "ก่อนนอน", exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "ตามยา", exact: true }).click();
   // Delete the one added by mistake.
@@ -287,7 +282,7 @@ test("an unfinished new medicine can be found and continued", async ({
   const name = "Synthetic draft " + Date.now();
   await page.goto("/");
   await page.getByRole("button", { name: "ทดลองด้วยข้อมูลสมมติ" }).click();
-  await page.getByRole("button", { name: "ยาของฉัน", exact: true }).click();
+  await page.getByRole("button", { name: "รายการยา", exact: true }).click();
   await page.getByRole("button", { name: "เพิ่มยา" }).click();
   const form = page.getByRole("dialog");
   await form.getByLabel("ชื่อยา", { exact: true }).fill(name);
@@ -304,4 +299,71 @@ test("an unfinished new medicine can be found and continued", async ({
   await page.getByRole("button", { name: "ปิด", exact: true }).click();
   await draft.getByRole("button", { name: /ทิ้ง/ }).click();
   await expect(draft).toHaveCount(0);
+});
+test("settings tab, language toggle, back from pop-ups and name voice button", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "ทดลองด้วยข้อมูลสมมติ" }).click();
+  // Today has no sync button; it lives on the Settings tab with the credit.
+  await expect(
+    page.getByRole("button", { name: /ซิงค์ข้อมูลตอนนี้/ }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "การตั้งค่า", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "การตั้งค่า", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /ซิงค์ข้อมูลตอนนี้/ }),
+  ).toBeVisible();
+  await expect(page.getByText("Sorawut Thamyongkit, M.D.")).toBeVisible();
+  // Language toggle at the top switches at once.
+  await page.getByRole("button", { name: "EN", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Settings", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "ไทย", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "การตั้งค่า", exact: true }),
+  ).toBeVisible();
+  // Every pop-up has a Back button, and the phone's Back also closes it.
+  const name = "Amoxicillin " + Date.now();
+  await page.getByRole("button", { name: "รายการยา", exact: true }).click();
+  await page.getByRole("button", { name: "เพิ่มยา" }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.getByRole("button", { name: /กลับ/ }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.getByRole("button", { name: "เพิ่มยา" }).click();
+  const form = page.getByRole("dialog");
+  await form.getByLabel("ชื่อยา", { exact: true }).fill(name);
+  await form.getByRole("button", { name: "1", exact: true }).click();
+  await form.getByRole("button", { name: "เม็ด", exact: true }).click();
+  await form.getByRole("button", { name: "เย็น", exact: true }).click();
+  await form.getByLabel("ข้อมูลนี้ตรงกับใบสั่งยา").check();
+  await form.getByRole("button", { name: /^✓ บันทึก$/ }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  const row = page.locator(".med-row", { hasText: name });
+  await row.getByRole("button", { name: /เปิดข้อมูลยา/ }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.goBack();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "รายการยา", exact: true }),
+  ).toBeVisible();
+  // The voice button reads the medicine name in English.
+  await page.evaluate(() => {
+    (window as any).spoken = [];
+    window.speechSynthesis.speak = (u: SpeechSynthesisUtterance) =>
+      (window as any).spoken.push([u.text, u.lang]);
+  });
+  await row.getByRole("button", { name: "ฟังเสียงชื่อยา " + name }).click();
+  expect(await page.evaluate(() => (window as any).spoken)).toEqual([
+    [name, "en-US"],
+  ]);
+  // Today shows the dose under a colour-coded evening group and the new wording.
+  await page.getByRole("button", { name: "วันนี้", exact: true }).click();
+  await expect(
+    page.locator(".period-group.period-evening").first(),
+  ).toBeVisible();
 });

@@ -1,4 +1,4 @@
-# Medication Companion · เพื่อนเรื่องยา
+# My Medicine · ยาของฉัน
 
 A Thai-first medication organizer for patients and invited caregivers. React PWA, authenticated Node API, PostgreSQL, private photos, offline outbox, and an independent durable Web Push worker. Instructions are entered from the original prescription or advice; the app does not prescribe or decide whether a late dose is safe.
 

@@ -6,6 +6,8 @@ import {
   resolveWall,
   projectDose,
   genericPush,
+  periodOf,
+  reminderPush,
 } from "../packages/domain/src";
 const r = {
   status: "active" as const,
@@ -179,5 +181,52 @@ describe("Dose projections", () => {
       "body",
     ]);
     expect(p.body).not.toContain("dose");
+  });
+  it("reminder lists the medicines and the part of the day", () => {
+    const p = reminderPush("id", "tag", "2026-01-01", "th", "08:00", [
+      { name: "Metformin", strength: "500 mg", amount: "1", unit: "เม็ด" },
+      { name: "Amlodipine", amount: "1/2", unit: "เม็ด" },
+    ]);
+    expect(p.detail.title).toBe("ถึงเวลาใช้ยา · เช้า 08:00");
+    expect(p.detail.body).toBe(
+      "• Metformin 500 mg — 1 เม็ด\n• Amlodipine — 1/2 เม็ด",
+    );
+    // The neutral text is still there for a phone that hides names.
+    expect(p.body).toBe("เปิดแอปเพื่อตรวจสอบรายการยา");
+    const many = reminderPush(
+      "id",
+      "tag",
+      "2026-01-01",
+      "en",
+      "21:30",
+      Array.from({ length: 10 }, (_, i) => ({ name: "Med " + i })),
+      true,
+    );
+    expect(many.detail.title).toBe("Medicine time (reminder) · Bedtime 21:30");
+    expect(many.detail.body.split("\n")).toHaveLength(9);
+    expect(many.detail.body).toContain("and 2 more");
+  });
+  it("every clock time belongs to one part of the day", () => {
+    expect(
+      [
+        "06:00",
+        "10:59",
+        "11:00",
+        "15:59",
+        "16:00",
+        "19:59",
+        "20:00",
+        "03:59",
+      ].map(periodOf),
+    ).toEqual([
+      "morning",
+      "morning",
+      "noon",
+      "noon",
+      "evening",
+      "evening",
+      "bedtime",
+      "bedtime",
+    ]);
   });
 });

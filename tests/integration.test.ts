@@ -386,11 +386,14 @@ describe("Durable queue", () => {
     ).rows;
     expect(rows).toHaveLength(1);
   });
-  it("overlapping workers claim once and emit generic stable payload", async () => {
+  it("overlapping workers claim once and name the medicines due", async () => {
     let sent = 0;
     const sender = async (_s: any, p: any, ttl: number) => {
       sent++;
+      // The neutral fallback text stays neutral; the details name what is due.
       expect(p.body).not.toContain("Synthetic");
+      expect(p.detail.title).toMatch(/^Medicine time · \w+ \d\d:\d\d$/);
+      expect(p.detail.body).toMatch(/^• Synthetic/);
       expect(ttl).toBeGreaterThan(0);
       return { statusCode: 201 };
     };

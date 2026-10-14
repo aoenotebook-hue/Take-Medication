@@ -1,7 +1,7 @@
 export const words = {
   en: {
     today: "Today",
-    medicines: "My medicines",
+    medicines: "Medicine list",
     doctor: "Show doctor",
     settings: "Settings",
     add: "Add medicine",
@@ -12,7 +12,7 @@ export const words = {
     unconfirmed: "Not confirmed",
     save: "Save",
     cancel: "Cancel",
-    sync: "Retry synchronization",
+    sync: "Sync now",
     pending:
       "Saved on this phone. Server reminders may still follow the previous schedule until you reconnect.",
     summary:
@@ -114,18 +114,18 @@ export const words = {
   },
   th: {
     today: "วันนี้",
-    medicines: "ยาของฉัน",
+    medicines: "รายการยา",
     doctor: "แสดงให้แพทย์ดู",
     settings: "การตั้งค่า",
     add: "เพิ่มยา",
-    taken: "บันทึกว่าใช้แล้ว",
+    taken: "บันทึกว่าได้รับยาแล้ว",
     skip: "ข้าม",
     later: "เตือนภายหลัง",
     undo: "แก้ไข / ยกเลิกบันทึก",
     unconfirmed: "ยังไม่ยืนยัน",
     save: "บันทึก",
     cancel: "ยกเลิก",
-    sync: "ลองซิงค์อีกครั้ง",
+    sync: "ซิงค์ข้อมูลตอนนี้",
     pending:
       "การเปลี่ยนแปลงบันทึกในโทรศัพท์นี้ การแจ้งเตือนจากเซิร์ฟเวอร์อาจยังใช้ตารางเดิมจนกว่าจะเชื่อมต่ออีกครั้ง",
     summary:
@@ -189,7 +189,7 @@ export const words = {
     delete: "ลบบัญชี",
     caregiver: "ผู้ดูแล",
     back: "ย้อนกลับ",
-    takenStatus: "ใช้แล้ว",
+    takenStatus: "ได้รับยาแล้ว",
     skippedStatus: "ข้ามแล้ว",
     conflictStatus: "ต้องตรวจสอบ",
     email: "อีเมล",

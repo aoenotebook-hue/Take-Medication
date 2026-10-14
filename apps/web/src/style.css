@@ -890,3 +890,177 @@ button.danger {
   border-style: dashed;
   background: #fffaf0;
 }
+/* Header: app name, sync warning, language toggle */
+header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: #f5f7f4;
+  border-bottom: 1px solid #dbe5de;
+}
+header .brand {
+  font-size: 1.15rem;
+  color: #155e52;
+  margin-right: auto;
+}
+.lang-toggle {
+  display: inline-flex;
+  border: 1px solid #8aa29a;
+  border-radius: 12px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.lang-toggle button {
+  border: 0;
+  border-radius: 0;
+  min-height: 44px;
+  min-width: 3.2rem;
+  padding: 0.2rem 0.6rem;
+  font-weight: 600;
+}
+.lang-toggle [aria-pressed="true"] {
+  background: #155e52;
+  color: white;
+}
+.welcome-top {
+  display: flex;
+  justify-content: flex-end;
+}
+.sync-chip {
+  min-height: 40px;
+  padding: 0.1rem 0.6rem;
+  font-size: 0.8rem;
+  border-radius: 999px;
+  background: #fff4de;
+  color: #5c350d;
+  border-color: #e3b46b;
+}
+p.sync {
+  display: block;
+  font-weight: 600;
+}
+/* Parts of the day: one colour each */
+.period-morning {
+  --period-bg: #fff3cd;
+  --period-line: #e0a800;
+  --period-text: #5e4100;
+}
+.period-noon {
+  --period-bg: #dff3e4;
+  --period-line: #2f9e57;
+  --period-text: #145a2f;
+}
+.period-evening {
+  --period-bg: #fde2d9;
+  --period-line: #d9603b;
+  --period-text: #74270f;
+}
+.period-bedtime {
+  --period-bg: #e4e5fb;
+  --period-line: #5054c8;
+  --period-text: #262a78;
+}
+.periods {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: center;
+}
+.period {
+  display: inline-block;
+  padding: 0.1rem 0.6rem;
+  border-radius: 999px;
+  background: var(--period-bg);
+  color: var(--period-text);
+  border: 1px solid var(--period-line);
+  font-weight: 700;
+  font-size: 0.95rem;
+  white-space: nowrap;
+}
+.period small,
+.period-amount {
+  font-weight: 500;
+}
+.period-days {
+  font-size: 0.85rem;
+  color: #466259;
+}
+.period-group {
+  background: var(--period-bg);
+  border-radius: 16px;
+  padding: 0.2rem 0.6rem 0.4rem;
+  border-left: 8px solid var(--period-line);
+}
+.period-group > .group-head {
+  color: var(--period-text);
+  margin: 0.5rem 0 0.3rem;
+}
+.group-time {
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+.dose-row[class*="period-"],
+.med-row[class*="period-"] {
+  border-left: 6px solid var(--period-line);
+}
+.dose-row.late {
+  border-left-color: #af580e;
+}
+.dose-name {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+.speak {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 1.1rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.med-row > .speak {
+  align-self: center;
+  margin: 0 0.2rem;
+}
+.speak-wide {
+  margin-bottom: 0.4rem;
+}
+/* Pop-ups: a clear way back */
+.modal-head {
+  position: sticky;
+  top: -1.2rem;
+  background: white;
+  z-index: 2;
+  gap: 0.5rem;
+  margin: -1.2rem -1.2rem 0.6rem;
+  padding: 0.6rem 0.8rem;
+  border-bottom: 1px solid #dbe5de;
+  flex-wrap: nowrap;
+}
+.modal-head h2 {
+  flex: 1;
+  font-size: 1.1rem;
+  margin: 0;
+  text-align: center;
+}
+.back-button {
+  font-weight: 700;
+  min-width: 5rem;
+}
+.credit {
+  text-align: center;
+  color: #466259;
+  margin: 2rem 0 1rem;
+  font-size: 0.9rem;
+}
+.med-row-main .periods {
+  justify-self: stretch;
+}
+.next-time small {
+  font-size: 1rem;
+  color: inherit;
+  opacity: 0.85;
+}

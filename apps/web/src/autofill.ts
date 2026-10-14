@@ -31,6 +31,13 @@ export function mealTime(meal: Meal, food = "") {
     String(total % 60).padStart(2, "0")
   );
 }
+export { periodOf } from "../../../packages/domain/src";
+export const mealIcons: Record<Meal, string> = {
+  morning: "🌅",
+  noon: "☀️",
+  evening: "🌇",
+  bedtime: "🌙",
+};
 export function mealOf(time: string): Meal | undefined {
   return MEALS.find(
     (meal) => mealTime(meal) === time || mealTime(meal, "ก่อนอาหาร") === time,

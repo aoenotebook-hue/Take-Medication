@@ -216,7 +216,7 @@ try {
     "CREATE POLICY medication_photos_api_only ON storage.objects AS RESTRICTIVE FOR ALL TO anon, authenticated USING(bucket_id<>'medication-photos') WITH CHECK(bucket_id<>'medication-photos')",
   );
   const template =
-    "<h2>เพื่อนเรื่องยา / Medication Companion</h2><p>รหัสเข้าสู่ระบบ / Sign-in code: <strong>{{ .Token }}</strong></p><p>Use this code only in the app. Do not share it.</p>";
+    "<h2>ยาของฉัน / My Medicine</h2><p>รหัสเข้าสู่ระบบ / Sign-in code: <strong>{{ .Token }}</strong></p><p>Use this code only in the app. Do not share it.</p>";
   await managed("/config/auth", "PATCH", {
     site_url: origin,
     uri_allow_list: Array.from(
