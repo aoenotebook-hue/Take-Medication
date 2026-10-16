@@ -34,6 +34,12 @@ import {
 } from "./format";
 import { preparePhoto } from "./photo";
 import {
+  buildCalendar,
+  iosVersion,
+  openCalendar,
+  pushUnavailable,
+} from "./calendar";
+import {
   alertUser,
   buzz,
   playChime,
@@ -1062,10 +1068,15 @@ function App() {
         typeof Notification === "undefined"
       )
         throw new Error(
-          L(
-            "เบราว์เซอร์นี้ไม่รองรับการแจ้งเตือน ",
-            "This browser does not support reminders. ",
-          ) + t.install,
+          (iosVersion() ?? 99) < 16.4
+            ? L(
+                "iPhone รุ่นนี้ (iOS ต่ำกว่า 16.4 เช่น iPhone 7) รับการแจ้งเตือนจากเว็บแอปไม่ได้ ใช้ปุ่ม “เพิ่มเวลายาลงปฏิทินเครื่อง” ด้านล่างแทน",
+                "This iPhone (iOS below 16.4, such as an iPhone 7) cannot receive web-app notifications. Use the “Add dose times to my Calendar” button below instead.",
+              )
+            : L(
+                "เบราว์เซอร์นี้ไม่รองรับการแจ้งเตือน ",
+                "This browser does not support reminders. ",
+              ) + t.install,
         );
       if (/iPhone|iPad/.test(navigator.userAgent) && !standalone())
         throw new Error(t.install);
@@ -2433,6 +2444,102 @@ function App() {
             </section>
             <section className="settings-group">
               <h3>{t.remindersOn}</h3>
+              {pushUnavailable() && (
+                <article className="warning" role="note">
+                  <strong>
+                    {(iosVersion() ?? 99) < 16.4
+                      ? L(
+                          "iPhone รุ่นนี้ (เช่น iPhone 7 ใช้ iOS 15) รับการแจ้งเตือนจากเว็บแอปไม่ได้ เป็นข้อจำกัดของ Apple ไม่ใช่ข้อผิดพลาดของแอป",
+                          "This iPhone (for example an iPhone 7 on iOS 15) cannot receive web-app notifications. This is an Apple limit, not an app fault.",
+                        )
+                      : L(
+                          "เบราว์เซอร์นี้รับการแจ้งเตือนจากเว็บแอปไม่ได้",
+                          "This browser cannot receive web-app notifications.",
+                        )}
+                  </strong>
+                  <p>
+                    {L(
+                      "ใช้แจ้งเตือนจากแอป “ปฏิทิน” ของเครื่องแทน: เสียงและการสั่นของเครื่องจะดังตามเวลา โดยไม่ต้องใช้อินเทอร์เน็ต",
+                      "Use your phone's Calendar app instead: it rings and vibrates at each dose time with no internet needed.",
+                    )}
+                  </p>
+                </article>
+              )}
+              <button
+                className={pushUnavailable() ? "primary" : undefined}
+                onClick={async () => {
+                  const cal = buildCalendar(view, lang, { hideNames });
+                  if (!cal.events) {
+                    setMessage(
+                      L(
+                        "ยังไม่มียาที่ยืนยันแล้วและมีเวลาใช้ยา",
+                        "No confirmed medicines with set times yet",
+                      ),
+                    );
+                    return;
+                  }
+                  const r = await openCalendar(cal.text, "my-medicine.ics");
+                  if (r !== "cancelled")
+                    setMessage(
+                      L(
+                        "✓ เตรียมปฏิทินแล้ว กด “เพิ่มทั้งหมด” / “Add All” เมื่อปฏิทินถาม (ถ้าไม่ขึ้น ให้เปิดแอปนี้ใน Safari แล้วกดปุ่มนี้อีกครั้ง)",
+                        "✓ Calendar file ready. Tap “Add All” when Calendar asks (if nothing appears, open this app in Safari and tap this button again).",
+                      ),
+                    );
+                }}
+              >
+                📅{" "}
+                {L(
+                  "เพิ่มเวลายาลงปฏิทินเครื่อง",
+                  "Add dose times to my Calendar",
+                )}
+              </button>
+              <p className="hint">
+                {L(
+                  "สร้างกิจกรรมซ้ำทุกสัปดาห์สำหรับแต่ละเวลา พร้อมเตือนตอนถึงเวลาและซ้ำอีก 10 และ 20 นาที ปฏิทินไม่รู้ว่าคุณกินยาแล้วหรือยัง จึงยังเตือนอยู่ ให้บันทึกในแอปนี้ และเมื่อแก้ไขยา ให้ลบกิจกรรม “ยาของฉัน” เดิมในปฏิทินก่อนเพิ่มใหม่",
+                  "Creates a weekly repeating event for each dose time, alerting at the time and again 10 and 20 minutes later. Calendar does not know you already took it, so it still alerts; record it in this app. After editing medicines, delete the old “My Medicine” events in Calendar before adding again.",
+                )}
+              </p>
+              <details className="about">
+                <summary>
+                  {L(
+                    "ซ่อนกิจกรรมในปฏิทินและไม่เก็บการแจ้งเตือนเก่า",
+                    "Hide the events and keep no old alerts",
+                  )}
+                </summary>
+                <ol>
+                  <li>
+                    {L(
+                      "ก่อนเพิ่ม: เปิดแอป ปฏิทิน → ปฏิทิน (ด้านล่าง) → + เพิ่มปฏิทิน ตั้งชื่อ “ยาของฉัน”",
+                      "Before adding: open Calendar → Calendars (bottom) → Add Calendar, name it “My Medicine”.",
+                    )}
+                  </li>
+                  <li>
+                    {L(
+                      "เมื่อปฏิทินถาม ให้เลือกปฏิทิน “ยาของฉัน” แล้วกด เพิ่มทั้งหมด",
+                      "When Calendar asks, choose the “My Medicine” calendar and tap Add All.",
+                    )}
+                  </li>
+                  <li>
+                    {L(
+                      "ในรายการ ปฏิทิน ให้เอาเครื่องหมายถูกหน้า “ยาของฉัน” ออก กิจกรรมจะไม่แสดงในตารางวัน แต่เสียงเตือนยังดังตามปกติ",
+                      "In the Calendars list, untick “My Medicine”. The events disappear from your days but the alerts still ring.",
+                    )}
+                  </li>
+                  <li>
+                    {L(
+                      "ตั้งค่า → การแจ้งเตือน → ปฏิทิน: ปิด ป้ายแจ้งเตือน (Badges) เอา ศูนย์การแจ้งเตือน (และ หน้าจอล็อก ถ้าไม่ต้องการให้เหลือ) ออก และตั้งรูปแบบแบนเนอร์เป็น ชั่วคราว",
+                      "Settings → Notifications → Calendar: turn Badges off, untick Notification Center (and Lock Screen if you want nothing left), and set Banner Style to Temporary.",
+                    )}
+                  </li>
+                </ol>
+                <p className="hint">
+                  {L(
+                    "ถ้าไม่เก็บการแจ้งเตือน เมื่อพลาดแล้วจะไม่มีร่องรอยให้ดูย้อนหลัง ลบทั้งหมดได้โดยลบปฏิทิน “ยาของฉัน”",
+                    "With nothing kept, a missed alert leaves no trace. Delete everything at once by deleting the “My Medicine” calendar.",
+                  )}
+                </p>
+              </details>
               <InstallGuide lang={lang} always />
               <ul className="checklist">
                 {(

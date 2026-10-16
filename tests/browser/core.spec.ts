@@ -452,3 +452,57 @@ test("a dose that becomes due rings and opens big answer buttons with 10/15-minu
   await page.getByRole("button", { name: "ลบ " + name }).click();
   await syncNow(page);
 });
+test.describe("iPhone 7 (iOS 15) has no web push", () => {
+  test.use({
+    userAgent:
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 15_8_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.6 Mobile/15E148 Safari/604.1",
+  });
+  test("explains the limit and offers dose times for the Calendar app", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      delete (window as any).PushManager;
+      delete (window as any).Notification;
+    });
+    await page.goto("/");
+    await page.getByRole("button", { name: "ไทย", exact: true }).click();
+    await page.getByRole("button", { name: "ทดลองด้วยข้อมูลสมมติ" }).click();
+    await page.getByRole("button", { name: "รายการยา", exact: true }).click();
+    await page.getByRole("button", { name: "เพิ่มยา" }).click();
+    const form = page.getByRole("dialog");
+    await form.getByLabel("ชื่อยา", { exact: true }).fill("Synthetic calendar");
+    await form.getByRole("button", { name: "1", exact: true }).click();
+    await form.getByRole("button", { name: "เม็ด", exact: true }).click();
+    await form.getByRole("button", { name: "เช้า", exact: true }).click();
+    await form.getByLabel("ข้อมูลนี้ตรงกับใบสั่งยา").check();
+    await form.getByRole("button", { name: /^✓ บันทึก$/ }).click();
+    await syncNow(page);
+    await page.getByRole("button", { name: "การตั้งค่า", exact: true }).click();
+    await expect(
+      page.getByText(/iPhone 7 ใช้ iOS 15\) รับการแจ้งเตือนจากเว็บแอปไม่ได้/),
+    ).toBeVisible();
+    await page
+      .getByText("ซ่อนกิจกรรมในปฏิทินและไม่เก็บการแจ้งเตือนเก่า")
+      .click();
+    await expect(page.getByText(/ตั้งชื่อ “ยาของฉัน”/)).toBeVisible();
+    const download = page.waitForEvent("download");
+    await page
+      .getByRole("button", { name: /เพิ่มเวลายาลงปฏิทินเครื่อง/ })
+      .click();
+    const file = await download;
+    expect(file.suggestedFilename()).toBe("my-medicine.ics");
+    const text = (await (await file.createReadStream()).toArray())
+      .map((c) => c.toString())
+      .join("")
+      .replace(/\r\n /g, "");
+    expect(text).toContain("BEGIN:VCALENDAR");
+    expect(text).toContain("Synthetic calendar");
+    expect(text).toContain("RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR,SA,SU");
+    expect(text).toContain("DTSTART:");
+    // "Enable reminders" gives the iOS-specific explanation, not Home Screen steps.
+    await page.getByRole("button", { name: "เปิดการแจ้งเตือน" }).click();
+    await expect(
+      page.getByText(/iOS ต่ำกว่า 16.4 เช่น iPhone 7/).first(),
+    ).toBeVisible();
+  });
+});
