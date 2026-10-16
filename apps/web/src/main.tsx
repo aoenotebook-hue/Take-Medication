@@ -2500,6 +2500,46 @@ function App() {
                   "Creates a weekly repeating event for each dose time, alerting at the time and again 10 and 20 minutes later. Calendar does not know you already took it, so it still alerts; record it in this app. After editing medicines, delete the old “My Medicine” events in Calendar before adding again.",
                 )}
               </p>
+              <details className="about">
+                <summary>
+                  {L(
+                    "ซ่อนกิจกรรมในปฏิทินและไม่เก็บการแจ้งเตือนเก่า",
+                    "Hide the events and keep no old alerts",
+                  )}
+                </summary>
+                <ol>
+                  <li>
+                    {L(
+                      "ก่อนเพิ่ม: เปิดแอป ปฏิทิน → ปฏิทิน (ด้านล่าง) → + เพิ่มปฏิทิน ตั้งชื่อ “ยาของฉัน”",
+                      "Before adding: open Calendar → Calendars (bottom) → Add Calendar, name it “My Medicine”.",
+                    )}
+                  </li>
+                  <li>
+                    {L(
+                      "เมื่อปฏิทินถาม ให้เลือกปฏิทิน “ยาของฉัน” แล้วกด เพิ่มทั้งหมด",
+                      "When Calendar asks, choose the “My Medicine” calendar and tap Add All.",
+                    )}
+                  </li>
+                  <li>
+                    {L(
+                      "ในรายการ ปฏิทิน ให้เอาเครื่องหมายถูกหน้า “ยาของฉัน” ออก กิจกรรมจะไม่แสดงในตารางวัน แต่เสียงเตือนยังดังตามปกติ",
+                      "In the Calendars list, untick “My Medicine”. The events disappear from your days but the alerts still ring.",
+                    )}
+                  </li>
+                  <li>
+                    {L(
+                      "ตั้งค่า → การแจ้งเตือน → ปฏิทิน: ปิด ป้ายแจ้งเตือน (Badges) เอา ศูนย์การแจ้งเตือน (และ หน้าจอล็อก ถ้าไม่ต้องการให้เหลือ) ออก และตั้งรูปแบบแบนเนอร์เป็น ชั่วคราว",
+                      "Settings → Notifications → Calendar: turn Badges off, untick Notification Center (and Lock Screen if you want nothing left), and set Banner Style to Temporary.",
+                    )}
+                  </li>
+                </ol>
+                <p className="hint">
+                  {L(
+                    "ถ้าไม่เก็บการแจ้งเตือน เมื่อพลาดแล้วจะไม่มีร่องรอยให้ดูย้อนหลัง ลบทั้งหมดได้โดยลบปฏิทิน “ยาของฉัน”",
+                    "With nothing kept, a missed alert leaves no trace. Delete everything at once by deleting the “My Medicine” calendar.",
+                  )}
+                </p>
+              </details>
               <InstallGuide lang={lang} always />
               <ul className="checklist">
                 {(

@@ -481,6 +481,10 @@ test.describe("iPhone 7 (iOS 15) has no web push", () => {
     await expect(
       page.getByText(/iPhone 7 ใช้ iOS 15\) รับการแจ้งเตือนจากเว็บแอปไม่ได้/),
     ).toBeVisible();
+    await page
+      .getByText("ซ่อนกิจกรรมในปฏิทินและไม่เก็บการแจ้งเตือนเก่า")
+      .click();
+    await expect(page.getByText(/ตั้งชื่อ “ยาของฉัน”/)).toBeVisible();
     const download = page.waitForEvent("download");
     await page
       .getByRole("button", { name: /เพิ่มเวลายาลงปฏิทินเครื่อง/ })
