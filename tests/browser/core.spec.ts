@@ -485,16 +485,22 @@ test.describe("iPhone 7 (iOS 15) has no web push", () => {
       .getByText("ซ่อนกิจกรรมในปฏิทินและไม่เก็บการแจ้งเตือนเก่า")
       .click();
     await expect(page.getByText(/ตั้งชื่อ “ยาของฉัน”/)).toBeVisible();
-    const download = page.waitForEvent("download");
     await page
       .getByRole("button", { name: /เพิ่มเวลายาลงปฏิทินเครื่อง/ })
       .click();
-    const file = await download;
-    expect(file.suggestedFilename()).toBe("my-medicine.ics");
-    const text = (await (await file.createReadStream()).toArray())
-      .map((c) => c.toString())
-      .join("")
-      .replace(/\r\n /g, "");
+    // A real link opens Safari's own "Add to Calendar" sheet.
+    const open = page.getByRole("link", { name: /เปิดเพื่อเพิ่มในปฏิทิน/ });
+    await expect(open).toBeVisible();
+    const href = (await open.getAttribute("href"))!;
+    expect(href).toMatch(/\/api\/calendar\/[\w-]+\.ics$/);
+    expect(href).not.toContain("Synthetic");
+    await expect(
+      page.getByRole("button", { name: /คัดลอกลิงก์/ }),
+    ).toBeVisible();
+    const file = await page.request.get(href);
+    expect(file.status()).toBe(200);
+    expect(file.headers()["content-type"]).toContain("text/calendar");
+    const text = (await file.text()).replace(/\r\n /g, "");
     expect(text).toContain("BEGIN:VCALENDAR");
     expect(text).toContain("Synthetic calendar");
     expect(text).toContain("RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR,SA,SU");

@@ -133,3 +133,40 @@ it("recognises an iPhone 7 (iOS 15) as too old for web push", () => {
   expect(iosVersion(ios17)).toBeGreaterThan(16.4);
   expect(iosVersion("Mozilla/5.0 (Linux; Android 14)")).toBeUndefined();
 });
+
+import { checkCalendarText } from "../apps/api/src/calendar-link";
+import { openToken, sealToken } from "../apps/api/src/secrets";
+
+it("the calendar link accepts the app's own file and nothing else", () => {
+  const { text } = buildCalendar(snapshot, "th", { now });
+  expect(checkCalendarText(text)).toBe(text);
+  const wrap = (extra: string) =>
+    text.replace("BEGIN:VEVENT\r\n", "BEGIN:VEVENT\r\n" + extra + "\r\n");
+  for (const bad of [
+    "ATTACH:https://evil.example/x",
+    "ORGANIZER:mailto:a@b.example",
+    "URL:https://evil.example",
+    "ATTENDEE:mailto:a@b.example",
+    "X-APPLE-STRUCTURED-LOCATION:geo:0,0",
+  ])
+    expect(() => checkCalendarText(wrap(bad))).toThrow();
+  expect(() => checkCalendarText("hello")).toThrow();
+  expect(() => checkCalendarText(text + "x".repeat(70000))).toThrow();
+  expect(() => checkCalendarText(42)).toThrow();
+});
+
+it("link tokens round-trip, hide their content and reject tampering", () => {
+  process.env.PUSH_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
+  const value = { ics: "BEGIN:VCALENDAR Metformin", exp: Date.now() + 1000 };
+  const token = sealToken(value);
+  expect(openToken(token)).toEqual(value);
+  expect(token).not.toContain("Metformin");
+  expect(Buffer.from(token.slice(1), "base64url").toString()).not.toContain(
+    "Metformin",
+  );
+  const flipped = token.slice(0, -3) + (token.endsWith("AAA") ? "BBB" : "AAA");
+  expect(() => openToken(flipped)).toThrow();
+  expect(() => openToken("p" + token.slice(1))).toThrow();
+  expect(() => openToken("")).toThrow();
+  delete process.env.PUSH_ENCRYPTION_KEY;
+});

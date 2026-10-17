@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
+import { CALENDAR_LINK_SECONDS, checkCalendarText } from "./calendar-link.js";
 import {
   randomUUID,
   randomBytes,
@@ -20,7 +21,7 @@ import {
   snoozeWindowSeconds,
 } from "./service.js";
 import { authenticate, demoEnabled, demoToken, supabase } from "./auth.js";
-import { seal } from "./secrets.js";
+import { openToken, seal, sealToken } from "./secrets.js";
 import { validateEndpoint } from "../../worker/src/push.js";
 import {
   cronAuthorized,
@@ -105,6 +106,29 @@ app.get("/api/health", async (_req, res) => {
     })),
     adapter: process.env.PUSH_ADAPTER || "webpush",
   });
+});
+// A phone without web push opens its dose times in Calendar from this link.
+// Possessing the encrypted, short-lived link is the only credential, so it sits
+// before sign-in and is never cached or logged with its content.
+app.get("/api/calendar/:token.ics", (req, res) => {
+  let file: { ics: string; exp: number } | undefined;
+  try {
+    file = openToken(req.params.token);
+  } catch {
+    /* forged, altered or unreadable */
+  }
+  if (!file || typeof file.ics !== "string" || !(file.exp > Date.now())) {
+    res.status(404).json({ error: "This link has expired; make a new one" });
+    return;
+  }
+  res
+    .status(200)
+    .set({
+      "Content-Type": "text/calendar; charset=utf-8",
+      "Content-Disposition": 'inline; filename="my-medicine.ics"',
+      "Cache-Control": "no-store",
+    })
+    .send(file.ics);
 });
 app.post("/api/internal/reminders", async (req, res) => {
   if (!cronAuthorized(req.headers.authorization)) {
@@ -605,6 +629,16 @@ app.get("/api/push/resolve/:id", async (req, res) => {
     patientId: job.patient_id,
     occurrenceIds: job.occurrence_ids,
     snooze: String(job.kind).startsWith("snooze"),
+  });
+});
+app.post("/api/calendar-link", (req, res) => {
+  const ics = checkCalendarText(req.body?.ics);
+  res.json({
+    url:
+      "/api/calendar/" +
+      sealToken({ ics, exp: Date.now() + CALENDAR_LINK_SECONDS * 1000 }) +
+      ".ics",
+    expiresInSeconds: CALENDAR_LINK_SECONDS,
   });
 });
 app.post("/api/push/observations", async (req, res) => {

@@ -310,6 +310,7 @@ function App() {
     [email, setEmail] = useState(""),
     [code, setCode] = useState(""),
     [registering, setRegistering] = useState(false),
+    [calendarLink, setCalendarLink] = useState(""),
     [needReset, setNeedReset] = useState(false),
     [resetCode, setResetCode] = useState(""),
     [pin2, setPin2] = useState(""),
@@ -2478,14 +2479,19 @@ function App() {
                     );
                     return;
                   }
-                  const r = await openCalendar(cal.text, "my-medicine.ics");
-                  if (r !== "cancelled")
-                    setMessage(
-                      L(
-                        "✓ เตรียมปฏิทินแล้ว กด “เพิ่มทั้งหมด” / “Add All” เมื่อปฏิทินถาม (ถ้าไม่ขึ้น ให้เปิดแอปนี้ใน Safari แล้วกดปุ่มนี้อีกครั้ง)",
-                        "✓ Calendar file ready. Tap “Add All” when Calendar asks (if nothing appears, open this app in Safari and tap this button again).",
-                      ),
-                    );
+                  try {
+                    // A real web link lets Safari show its own "Add to Calendar" sheet.
+                    const r = await api("/calendar-link", { ics: cal.text });
+                    setCalendarLink(location.origin + r.url);
+                    setMessage("");
+                  } catch (e: any) {
+                    if (e?.status) {
+                      setMessage(friendlyError(e, lang));
+                      return;
+                    }
+                    // Offline: hand the file over directly instead.
+                    await openCalendar(cal.text, "my-medicine.ics");
+                  }
                 }}
               >
                 📅{" "}
@@ -2500,6 +2506,44 @@ function App() {
                   "Creates a weekly repeating event for each dose time, alerting at the time and again 10 and 20 minutes later. Calendar does not know you already took it, so it still alerts; record it in this app. After editing medicines, delete the old “My Medicine” events in Calendar before adding again.",
                 )}
               </p>
+              {calendarLink && (
+                <article className="success calendar-link" role="status">
+                  <p>
+                    {L(
+                      "พร้อมแล้ว แตะปุ่มด้านล่าง ปฏิทินจะถามให้เพิ่มกิจกรรม เลือกปฏิทิน “ยาของฉัน” แล้วกด เพิ่มทั้งหมด (ลิงก์ใช้ได้ 10 นาที)",
+                      "Ready. Tap the button below; Calendar asks to add the events. Choose the “My Medicine” calendar and tap Add All (the link works for 10 minutes).",
+                    )}
+                  </p>
+                  <a
+                    className="button-link primary"
+                    href={calendarLink}
+                    target="_blank"
+                    rel="noopener"
+                  >
+                    📅 {L("เปิดเพื่อเพิ่มในปฏิทิน", "Open to add to Calendar")}
+                  </a>
+                  <button
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(calendarLink);
+                        setMessage(
+                          L(
+                            "✓ คัดลอกลิงก์แล้ว เปิด Safari แล้ววางที่แถบที่อยู่",
+                            "✓ Link copied. Open Safari and paste it in the address bar.",
+                          ),
+                        );
+                      } catch {
+                        setMessage(calendarLink);
+                      }
+                    }}
+                  >
+                    {L(
+                      "คัดลอกลิงก์ (ไปเปิดใน Safari)",
+                      "Copy link (open in Safari)",
+                    )}
+                  </button>
+                </article>
+              )}
               <details className="about">
                 <summary>
                   {L(
