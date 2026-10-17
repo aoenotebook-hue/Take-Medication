@@ -1112,3 +1112,22 @@ p.sync {
   border: 2px solid var(--period-line);
   color: var(--period-text);
 }
+.button-link {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+  padding: 1rem 0.9rem;
+  margin: 0.6rem 0;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 1.15rem;
+  color: white;
+  background: #155e52;
+}
+.calendar-link {
+  padding: 0.6rem 0.9rem;
+  border-radius: 14px;
+}
+.calendar-link button {
+  width: 100%;
+}

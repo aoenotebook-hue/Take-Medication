@@ -434,3 +434,77 @@ it("a remotely revoked or turned-off device stays off until the user re-enables 
   ]);
   await pool.query("DELETE FROM devices WHERE id=$1", [deviceId]);
 });
+
+it("a calendar link is private, short-lived, and carries only reminder events", async () => {
+  const { buildCalendar } = await import("../apps/web/src/calendar");
+  const { sealToken } = await import("../apps/api/src/secrets");
+  const snapshot: any = {
+    profile: {
+      id: patient,
+      data: { displayName: "Synthetic", timezone: "Asia/Bangkok" },
+    },
+    medications: [
+      { id: "m1", data: { name: "Synthetic calendar med", strength: "" } },
+    ],
+    regimens: [
+      {
+        id: "r1",
+        medication_id: "m1",
+        effective_at: "2026-01-01T00:00:00Z",
+        data: {
+          status: "active",
+          start: "2026-01-01",
+          timezone: "Asia/Bangkok",
+          slots: [
+            {
+              id: "a",
+              time: "08:00",
+              amount: "1",
+              unit: "tablet",
+              weekdays: [1, 2, 3, 4, 5, 6, 7],
+            },
+          ],
+        },
+      },
+    ],
+  };
+  const { text } = buildCalendar(snapshot, "en");
+  // Needs a signed-in user to create a link.
+  expect(
+    (
+      await request(
+        "/calendar-link",
+        "POST",
+        { ics: text },
+        { Authorization: "" },
+      )
+    ).status,
+  ).toBe(401);
+  expect(
+    (
+      await request("/calendar-link", "POST", {
+        ics: text + "\r\nATTACH:https://evil.example",
+      })
+    ).status,
+  ).toBe(422);
+  const made = await request("/calendar-link", "POST", { ics: text });
+  expect(made.status).toBe(200);
+  const { url } = await made.json();
+  expect(url).toMatch(/^\/api\/calendar\/[\w-]+\.ics$/);
+  expect(url).not.toContain("Synthetic");
+  // The link itself is the credential: no sign-in header is needed to open it.
+  const opened = await fetch(base + url);
+  expect(opened.status).toBe(200);
+  expect(opened.headers.get("content-type")).toContain("text/calendar");
+  expect(opened.headers.get("cache-control")).toBe("no-store");
+  expect(await opened.text()).toContain("Synthetic calendar med");
+  // Altered, forged and expired links all fail the same way.
+  const tampered = url.slice(0, -8) + "AAAA" + url.slice(-4);
+  expect((await fetch(base + tampered)).status).toBe(404);
+  expect((await fetch(base + "/api/calendar/garbage.ics")).status).toBe(404);
+  const expired =
+    "/api/calendar/" +
+    sealToken({ ics: text, exp: Date.now() - 1000 }) +
+    ".ics";
+  expect((await fetch(base + expired)).status).toBe(404);
+});
