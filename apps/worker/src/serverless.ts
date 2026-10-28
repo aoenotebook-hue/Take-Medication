@@ -2,6 +2,7 @@ import { randomUUID, timingSafeEqual } from "node:crypto";
 import { pool, transaction } from "../../../db/client.js";
 import { regenerate } from "../../api/src/service.js";
 import { dispatchOne, enqueueJobs, heartbeat } from "./worker.js";
+import { refreshAutomaticBatch } from "../../api/src/automatic-drug-information.js";
 
 export function cronAuthorized(
   header: string | undefined,
@@ -81,6 +82,9 @@ export async function runReminderBatch(
     await pool.query(
       "DELETE FROM api_rate_limits WHERE reset_at<now()-interval '1 hour'",
     );
+    // Source failures never delay or fail already due reminders.
+    if (Date.now() < deadline - 7000)
+      await refreshAutomaticBatch().catch(() => {});
     await heartbeat();
     return { busy: false, dispatched, refreshed };
   } finally {

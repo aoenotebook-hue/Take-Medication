@@ -1,9 +1,11 @@
 import Dexie, { type EntityTable } from "dexie";
 import type { Operation } from "../../api/src/service";
+import type { AutomaticInformation } from "../../../packages/domain/src/drug-uses";
 export type Snapshot = {
   profile: any;
   role: string;
   medications: any[];
+  automaticInformation?: AutomaticInformation[];
   regimens: any[];
   retiredRegimens?: any[];
   occurrences: any[];

@@ -83,7 +83,7 @@ it("calendar file has one repeating event per dose time with three alerts", () =
   // Both 08:00 medicines are listed in one event; the stopped one is not.
   const unfolded = text.replace(/\r\n /g, "");
   expect(unfolded).toContain(
-    "• Metformin 500 mg — 1 เม็ด\\n• Amlodipine — 1/2 เม็ด",
+    "• Metformin 500 mg — 1 เม็ด\\n  ใช้ทั่วไป: ลดน้ำตาลในเลือด",
   );
   expect(unfolded).not.toContain("Stopped one");
   expect(unfolded).toContain("ถึงเวลาใช้ยา · เช้า 08:00");
@@ -97,6 +97,7 @@ it("medicine names can be kept off the lock screen", () => {
   const { text } = buildCalendar(snapshot, "en", { now, hideNames: true });
   const unfolded = text.replace(/\r\n /g, "");
   expect(unfolded).not.toContain("Metformin");
+  expect(unfolded).not.toContain("Lowers blood sugar");
   expect(unfolded).toContain("Open My Medicine to see your medicines");
 });
 

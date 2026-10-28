@@ -171,3 +171,67 @@ it("permits viewer reading/search, denies writes, and denies revoked/outsider ac
   );
   expect(other.status).toBe(403);
 });
+it("automatically looks up a medicine without changing instructions and obeys the opt-out", async () => {
+  const url = base + "/api/patients/" + patient + "/drug-information/refresh";
+  const r = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + token,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ medicationIds: [med] }),
+  });
+  expect(r.status).toBe(200);
+  expect((await r.json()).automaticInformation[0].card.shortUses.en).toBe(
+    "Lowers blood sugar",
+  );
+  expect(
+    (await pool.query("SELECT data FROM medications WHERE id=$1", [med]))
+      .rows[0].data,
+  ).toEqual(data);
+  await pool.query(
+    "UPDATE patients SET data='{" +
+      '"automaticDrugInformation":false' +
+      "}' WHERE id=$1",
+    [patient],
+  );
+  const off = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + token,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ medicationIds: [med] }),
+  });
+  expect((await off.json()).automaticInformation).toEqual([]);
+});
+it("returns a bounded authorized monthly report and denies other patients", async () => {
+  const id = randomUUID();
+  await pool.query(
+    "INSERT INTO dose_occurrences(id,patient_id,medication_id,slot_id,local_date,local_time,timezone,intended_at,data) VALUES($1,$2,$3,'report',current_date,'00:00','Asia/Bangkok',now()-interval '1 minute','{}')",
+    [id, patient, med],
+  );
+  const month = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Asia/Bangkok",
+    year: "numeric",
+    month: "2-digit",
+  }).format(new Date());
+  const r = await fetch(
+    base + "/api/patients/" + patient + "/monthly-report?month=" + month,
+    { headers: { Authorization: "Bearer " + token } },
+  );
+  expect(r.status).toBe(200);
+  expect(r.headers.get("cache-control")).toBe("no-store");
+  expect((await r.json()).totals).toMatchObject({
+    scheduled: 1,
+    unconfirmed: 1,
+    takenPercent: 0,
+    notRecordedPercent: 100,
+  });
+  const denied = await fetch(
+    base + "/api/patients/" + randomUUID() + "/monthly-report?month=" + month,
+    { headers: { Authorization: "Bearer " + token } },
+  );
+  expect(denied.status).toBe(403);
+  await pool.query("DELETE FROM dose_occurrences WHERE id=$1", [id]);
+});

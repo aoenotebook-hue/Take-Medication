@@ -64,6 +64,9 @@ import {
 } from "./autofill";
 import type { Operation } from "../../api/src/service";
 import { DrugInformation } from "./components/DrugInformation";
+import { DrugUseSummary } from "./components/DrugUseSummary";
+import { MonthlyReport } from "./components/MonthlyReport";
+import { useDrugInformation } from "./useDrugInformation";
 registerSW({ immediate: true });
 const auth =
   import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY
@@ -335,6 +338,7 @@ function App() {
     [profileEdit, setProfileEdit] = useState(false),
     [caregiver, setCaregiver] = useState(false),
     [history, setHistory] = useState(false),
+    [monthly, setMonthly] = useState(false),
     [needsProfile, setNeedsProfile] = useState(false),
     [drafts, setDrafts] = useState<any[]>([]),
     [snoozing, setSnoozing] = useState(""),
@@ -371,6 +375,13 @@ function App() {
   const syncing = useRef(false);
   const patientRef = useRef(patient);
   patientRef.current = patient;
+  const automaticInformation = useDrugInformation(
+    actor,
+    patient,
+    s,
+    api,
+    generation,
+  );
   const syncMessage = useRef("");
   const inFlight = useRef(new Set<string>());
   // Display clock: re-render so due doses unlock and "next" stays current.
@@ -2120,6 +2131,9 @@ function App() {
           <>
             <div className="heading">
               <h1>{t.medicines}</h1>
+              <button onClick={() => setMonthly(true)}>
+                {L("รายงานรายเดือน", "Monthly report")}
+              </button>
               <button
                 className="primary"
                 disabled={view.role === "viewer"}
@@ -2302,6 +2316,11 @@ function App() {
                               aria-label={t.view + " " + m.data.name}
                             >
                               <strong>{it?.title || m.data.name}</strong>
+                              <DrugUseSummary
+                                medicine={m.data}
+                                information={automaticInformation[m.id]}
+                                lang={lang}
+                              />
                               {it && it.slots.length > 0 && (
                                 <PeriodChips
                                   slots={it.slots}
@@ -2368,6 +2387,11 @@ function App() {
                                       ? " " + m.data.strength
                                       : ""}
                                   </strong>
+                                  <DrugUseSummary
+                                    medicine={m.data}
+                                    information={automaticInformation[m.id]}
+                                    lang={lang}
+                                  />
                                   <span>
                                     {slot.amount} {slot.unit}
                                     {current(m.id)?.data.food
@@ -2417,6 +2441,9 @@ function App() {
             <div className="heading">
               <h1>{t.settings}</h1>
             </div>
+            <button className="report-open" onClick={() => setMonthly(true)}>
+              {L("รายงานรายเดือน", "Monthly report")}
+            </button>
             <section className="settings-group">
               <h3>{L("การซิงค์ข้อมูล", "Sync")}</h3>
               <p
@@ -2439,8 +2466,8 @@ function App() {
                 🔄 {t.sync}
               </button>
             </section>
-            <section className="settings-group">
-              <h3>{L("การแสดงผล", "Display")}</h3>
+            <details className="settings-group settings-fold">
+              <summary>{L("การแสดงผล", "Display")}</summary>
               <label className="check">
                 <input
                   type="checkbox"
@@ -2449,9 +2476,9 @@ function App() {
                 />
                 {t.largeText} / Large text
               </label>
-            </section>
-            <section className="settings-group">
-              <h3>{t.remindersOn}</h3>
+            </details>
+            <details className="settings-group settings-fold">
+              <summary>{t.remindersOn}</summary>
               {pushUnavailable() && (
                 <article className="warning" role="note">
                   <strong>
@@ -2696,14 +2723,14 @@ function App() {
                   onChange={(e) => setHideNames(!e.target.checked)}
                 />
                 {L(
-                  "แสดงชื่อยาและเวลาในการแจ้งเตือน",
-                  "Show medicine names and time in reminders",
+                  "แสดงชื่อยา สรรพคุณสั้น ๆ และเวลาในการแจ้งเตือน",
+                  "Show medicine names, short uses and time in reminders",
                 )}
               </label>
               <p className="hint">
                 {L(
-                  "การแจ้งเตือนอาจเห็นได้บนหน้าจอล็อก ปิดตัวเลือกนี้หากไม่ต้องการให้ผู้อื่นเห็นชื่อยา",
-                  "Reminders can be seen on the lock screen. Turn this off to hide medicine names on this phone.",
+                  "การแจ้งเตือนอาจเห็นได้บนหน้าจอล็อก ปิดตัวเลือกนี้หากไม่ต้องการให้ผู้อื่นเห็นชื่อยาและข้อมูลการใช้ยา",
+                  "Reminders can be seen on the lock screen. Turn this off to hide medicine names and uses on this phone.",
                 )}
               </p>
               {registered && (
@@ -2824,17 +2851,45 @@ function App() {
                   ))}
                 </>
               )}
-            </section>
-            <section className="settings-group">
-              <h3>{L("ผู้ป่วยและผู้ดูแล", "Patient and caregivers")}</h3>
+            </details>
+            <details className="settings-group settings-fold">
+              <summary>
+                {L("ผู้ป่วยและผู้ดูแล", "Patient and caregivers")}
+              </summary>
               <button onClick={() => setProfileEdit(true)}>
                 {t.profile} / {t.allergy}
               </button>
               <button onClick={() => setCaregiver(true)}>{t.caregiver}</button>
-            </section>
-            <section className="settings-group">
-              <h3>{L("ความเป็นส่วนตัวและข้อมูล", "Privacy and data")}</h3>
+            </details>
+            <details className="settings-group settings-fold">
+              <summary>
+                {L("ความเป็นส่วนตัวและข้อมูล", "Privacy and data")}
+              </summary>
               <p className="muted">{t.privacy}</p>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={view.profile.data.automaticDrugInformation !== false}
+                  disabled={view.role !== "owner"}
+                  onChange={(e) =>
+                    queue("profile", patient, view.profile.version, {
+                      ...view.profile.data,
+                      automaticDrugInformation: e.target.checked,
+                    }).catch(() => {})
+                  }
+                />
+                {L(
+                  "ค้นหาข้อมูลยาจากแหล่งภายนอกอัตโนมัติ",
+                  "Automatically look up drug names externally",
+                )}
+              </label>
+              <p className="hint">
+                {L(
+                  "ส่งเฉพาะชื่อยาไปยัง NLM ไม่ส่งชื่อผู้ป่วย เบอร์โทร หรือประวัติการใช้ยา",
+                  "Only drug names are sent to NLM, not patient identity, phone or dose history.",
+                )}
+              </p>
+
               <button
                 disabled={view.role !== "owner"}
                 onClick={async () => {
@@ -2869,9 +2924,9 @@ function App() {
               >
                 {t.export}
               </button>
-            </section>
-            <section className="settings-group">
-              <h3>{L("ล้างข้อมูล / เริ่มใหม่", "Reset")}</h3>
+            </details>
+            <details className="settings-group settings-fold">
+              <summary>{L("ล้างข้อมูล / เริ่มใหม่", "Reset")}</summary>
               <button
                 onClick={async () => {
                   if (
@@ -2981,11 +3036,11 @@ function App() {
                   </p>
                 </>
               )}
-            </section>
-            <section className="settings-group">
-              <h3>{L("บัญชี", "Account")}</h3>
+            </details>
+            <details className="settings-group settings-fold">
+              <summary>{L("บัญชี", "Account")}</summary>
               {auth && <ChangePin lang={lang} />}
-              <button onClick={logout}>{t.logout}</button>
+
               <button
                 className="danger"
                 disabled={view.role !== "owner"}
@@ -3016,7 +3071,10 @@ function App() {
               >
                 {t.delete}
               </button>
-            </section>
+            </details>
+            <button className="settings-signout" onClick={logout}>
+              {t.logout}
+            </button>
             <p className="credit">
               {L("พัฒนาโดย", "Developed by")}{" "}
               <strong>Sorawut Thamyongkit, M.D.</strong>
@@ -3219,6 +3277,13 @@ function App() {
                             {m?.data.strength ? " " + m.data.strength : ""}
                           </strong>
                           {m && <Speak text={m.data.name} lang={lang} />}
+                          {m && (
+                            <DrugUseSummary
+                              medicine={m.data}
+                              information={automaticInformation[m.id]}
+                              lang={lang}
+                            />
+                          )}
                         </span>
                         <span className="dose-what">
                           {o.data.amount} {o.data.unit}
@@ -3377,6 +3442,24 @@ function App() {
                     : ""),
               );
             }}
+          />
+        </Modal>
+      )}
+      {monthly && view && (
+        <Modal
+          title={L("รายงานรายเดือน", "Monthly report")}
+          close={() => setMonthly(false)}
+          closeLabel={L("ปิด", "Close")}
+        >
+          <MonthlyReport
+            key={actor + ":" + patient + ":" + generation}
+            actor={actor}
+            patientId={patient}
+            patientName={view.profile.data.displayName}
+            timezone={view.profile.data.timezone}
+            lang={lang}
+            pending={pending.length > 0}
+            request={api}
           />
         </Modal>
       )}

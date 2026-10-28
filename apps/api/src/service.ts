@@ -3,6 +3,8 @@ import type { PoolClient } from "pg";
 import { DateTime } from "luxon";
 import { z } from "zod";
 import { pool, transaction } from "../../../db/client.js";
+import { localDrugCard } from "../../../packages/domain/src/drug-uses.js";
+import { identityKey } from "../../../packages/domain/src/drug-information.js";
 import {
   medicationSchema,
   regimenSchema,
@@ -459,6 +461,30 @@ export async function snapshot(actor: string, patient: string) {
         [patient],
       )
     ).rows;
+    const automaticRows = (
+      await c.query(
+        "SELECT medication_id,identity_key,state,card,retry_at FROM medication_information_automatic WHERE patient_id=$1",
+        [patient],
+      )
+    ).rows;
+    const automaticInformation = medications
+      .map((m) => {
+        const local = localDrugCard(m.data);
+        return local
+          ? {
+              medication_id: m.id,
+              identity_key: identityKey(m.data),
+              state: "matched",
+              card: local,
+              retry_at: local.validUntil,
+            }
+          : automaticRows.find(
+              (r) =>
+                r.medication_id === m.id &&
+                r.identity_key === identityKey(m.data),
+            );
+      })
+      .filter(Boolean);
     const regimens = (
       await c.query(
         "SELECT * FROM regimen_versions WHERE patient_id=$1 AND id NOT IN (SELECT regimen_id FROM regimen_supersessions) ORDER BY effective_at",
@@ -510,6 +536,7 @@ export async function snapshot(actor: string, patient: string) {
       profile,
       role,
       medications,
+      automaticInformation,
       regimens,
       retiredRegimens,
       scheduleIssues,

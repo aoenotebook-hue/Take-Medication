@@ -8,6 +8,7 @@ import {
 } from "../../../packages/domain/src/index.js";
 import { unseal } from "../../api/src/secrets.js";
 import { sendPush } from "./push.js";
+import { drugUse } from "../../../packages/domain/src/drug-uses.js";
 export async function refreshHorizon() {
   await transaction(async (c) => {
     await c.query("SELECT pg_advisory_xact_lock(846102)");
@@ -162,15 +163,30 @@ export async function dispatchOne(
             [due.map((o) => o.medication_id)],
           )
         ).rows;
+        const automatic = (
+          await c.query(
+            "SELECT medication_id,identity_key,state,card,retry_at FROM medication_information_automatic WHERE patient_id=$1",
+            [job.patient_id],
+          )
+        ).rows;
         const items = due
           .map((o) => {
             const m = meds.find((x) => x.id === o.medication_id);
+            const use =
+              m &&
+              drugUse(
+                m.data,
+                automatic.find((a) => a.medication_id === m.id),
+                sub.profile.language === "en" ? "en" : "th",
+              );
             return m
               ? {
                   name: m.data.name,
                   strength: m.data.strength,
                   amount: o.data?.amount,
                   unit: o.data?.unit,
+                  use: use?.text,
+                  useKind: use?.kind,
                 }
               : undefined;
           })

@@ -139,6 +139,7 @@ export const profileSchema = z
       )
       .max(30),
     reviewedAt: z.string().optional(),
+    automaticDrugInformation: z.boolean().default(true),
   })
   .superRefine((p, c) => {
     if (p.allergyStatus === "known" && !p.allergies.length)
@@ -278,7 +279,14 @@ export function reminderPush(
   expiry: string,
   language: string,
   time: string,
-  items: { name: string; strength?: string; amount?: string; unit?: string }[],
+  items: {
+    name: string;
+    strength?: string;
+    amount?: string;
+    unit?: string;
+    use?: string;
+    useKind?: "general" | "recorded";
+  }[],
   repeat = false,
 ) {
   const th = language !== "en";
@@ -288,7 +296,18 @@ export function reminderPush(
     (i) =>
       "• " +
       [clip(i.name, 80), clip(i.strength, 40)].filter(Boolean).join(" ") +
-      (i.amount ? " — " + clip(i.amount, 12) + " " + clip(i.unit, 20) : ""),
+      (i.amount ? " — " + clip(i.amount, 12) + " " + clip(i.unit, 20) : "") +
+      (i.use
+        ? "\n  " +
+          (i.useKind === "recorded"
+            ? th
+              ? "เหตุผลที่บันทึก: "
+              : "Recorded reason: "
+            : th
+              ? "ใช้ทั่วไป: "
+              : "Common use: ") +
+          clip(i.use, 80)
+        : ""),
   );
   if (items.length > shown.length)
     lines.push(
@@ -307,7 +326,7 @@ export function reminderPush(
         names[periodOf(time)] +
         " " +
         clip(time, 5),
-      body: lines.join("\n"),
+      body: lines.join("\n").slice(0, 650),
     },
   };
 }

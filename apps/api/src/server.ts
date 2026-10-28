@@ -38,6 +38,9 @@ import {
 } from "./pin-auth.js";
 import { productionConfigErrors } from "../../../scripts/production-config.js";
 import { once } from "node:events";
+import { refreshAutomaticMedicine } from "./automatic-drug-information.js";
+import { monthlyReport } from "./monthly-report.js";
+import { localDrugCard } from "../../../packages/domain/src/drug-uses.js";
 import {
   getDrugInformation,
   searchDrugInformation,
@@ -408,18 +411,72 @@ app.get(informationPath, async (req, res) => {
       [med.id, req.params.id],
     )
   ).rows[0];
+  const automatic = (
+    await pool.query(
+      "SELECT identity_key,card FROM medication_information_automatic WHERE medication_id=$1 AND patient_id=$2 AND state='matched'",
+      [med.id, req.params.id],
+    )
+  ).rows[0];
+  const automaticCard =
+    localDrugCard(med.data) ||
+    (automatic?.identity_key === identityKey(med.data) ? automatic.card : null);
   res.json({
     identityKey: identityKey(med.data),
     state: !saved
-      ? "not-found"
+      ? automaticCard
+        ? "automatic"
+        : "not-found"
       : saved.identity_key !== identityKey(med.data)
         ? "needs-review"
         : "matched",
     card:
       saved?.identity_key === identityKey(med.data)
         ? drugCardSchema.parse(saved.card)
-        : null,
+        : !saved && automaticCard
+          ? drugCardSchema.parse(automaticCard)
+          : null,
   });
+});
+app.post(
+  "/api/patients/:id/drug-information/refresh",
+  informationLimit,
+  async (req, res) => {
+    const patient = z.string().uuid().parse(req.params.id);
+    await authorize(pool, res.locals.user.id, patient);
+    const d = z
+      .object({ medicationIds: z.array(z.string().uuid()).min(1).max(2) })
+      .strict()
+      .parse(req.body);
+    const profile = (
+      await pool.query("SELECT data FROM patients WHERE id=$1", [patient])
+    ).rows[0];
+    if (profile.data.automaticDrugInformation === false) {
+      res.json({ automaticInformation: [] });
+      return;
+    }
+    for (const id of d.medicationIds) {
+      const med = await informationMedicine(res.locals.user.id, patient, id);
+      med.patient_id = patient;
+      await refreshAutomaticMedicine(med);
+    }
+    await authorize(pool, res.locals.user.id, patient);
+    res.json({
+      automaticInformation: (
+        await pool.query(
+          "SELECT medication_id,identity_key,state,card,retry_at FROM medication_information_automatic WHERE patient_id=$1 AND medication_id=ANY($2::uuid[])",
+          [patient, d.medicationIds],
+        )
+      ).rows,
+    });
+  },
+);
+app.get("/api/patients/:id/monthly-report", async (req, res) => {
+  const patient = z.string().uuid().parse(req.params.id);
+  const month = z
+    .string()
+    .regex(/^\d{4}-(0[1-9]|1[0-2])$/)
+    .parse(req.query.month);
+  res.json(await monthlyReport(res.locals.user.id, patient, month));
 });
 app.post(informationPath + "/search", informationLimit, async (req, res) => {
   const med = await informationMedicine(

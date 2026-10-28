@@ -5,6 +5,82 @@
   font-size: 20px;
   line-height: 1.55;
 }
+.drug-use-summary {
+  display: block;
+  color: #315c50;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  margin-top: 0.2rem;
+  overflow-wrap: anywhere;
+}
+.drug-use-summary span {
+  font-weight: 600;
+}
+.settings-fold {
+  padding: 0.8rem 1rem;
+}
+.settings-fold > summary {
+  min-height: 48px;
+  display: list-item;
+  font-size: 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.settings-fold[open] > summary {
+  margin-bottom: 1rem;
+}
+.settings-fold > summary:focus-visible {
+  outline: 3px solid #af580e;
+  outline-offset: 3px;
+}
+.settings-signout,
+.report-open {
+  width: 100%;
+  margin: 0.6rem 0;
+}
+.report-totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+}
+.report-totals p {
+  margin: 0;
+  flex: 1;
+  min-width: 10rem;
+  border: 1px solid #8aa29a;
+  border-radius: 12px;
+  padding: 0.7rem;
+}
+.report-totals strong {
+  display: block;
+  font-size: 1.15rem;
+}
+.report-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.monthly-report table {
+  min-width: 36rem;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.monthly-report th,
+.monthly-report td {
+  border: 1px solid #8aa29a;
+  padding: 0.5rem;
+  text-align: start;
+  vertical-align: top;
+}
+.monthly-report caption {
+  font-size: 1rem;
+  text-align: start;
+  font-weight: 600;
+  padding: 0.5rem 0;
+}
+.monthly-report thead {
+  background: #e4eee7;
+}
 .drug-information {
   border: 1px solid #8aa29a;
   border-radius: 12px;

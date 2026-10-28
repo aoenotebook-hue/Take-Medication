@@ -44,3 +44,7 @@ Follow [the deployment and operations runbook](docs/runbook.md) for Supabase ema
 - [Original build specification](docs/specification.txt)
 
 Physical iPhone delivery, managed-provider credentials, native Thai-language review, clinician/pharmacist reconciliation and supervised patient usability are separate release gates. The source and automated checks do not establish clinical validation or legal compliance. No public deployment was performed.
+
+### Automatic medicine uses and monthly reports
+
+See [medicine information and report operations](docs/drug-information.md) for matching coverage, privacy, and limitations. Apply database migrations through **010** before deploying this release (`npm run migrate` with the target connection injected; never seed production). Existing Vercel/Supabase environment settings are unchanged. Backend egress must allow `rxnav.nlm.nih.gov` for automatic name resolution and `api.fda.gov` for optional manual label searches. Verify with `npm run typecheck`, `npm run check:api-build`, `npm test`, `npm run build`, and `npm run test:browser` against an isolated synthetic database. Deploy the verified main branch using the existing Vercel project.

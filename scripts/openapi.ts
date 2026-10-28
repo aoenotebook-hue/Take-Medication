@@ -83,6 +83,35 @@ add(
     },
   },
 );
+add(
+  "/api/patients/{id}/drug-information/refresh",
+  "post",
+  "Resolve up to two medicine identities using exact ingredient matches; respects automatic lookup preference",
+  {
+    type: "object",
+    additionalProperties: false,
+    required: ["medicationIds"],
+    properties: {
+      medicationIds: {
+        type: "array",
+        minItems: 1,
+        maxItems: 2,
+        items: { type: "string", format: "uuid" },
+      },
+    },
+  },
+);
+add(
+  "/api/patients/{id}/monthly-report",
+  "get",
+  "Patient-timezone monthly counts from valid doses already due; missing records are not confirmed missed doses",
+);
+paths["/api/patients/{id}/monthly-report"].get.parameters.push({
+  in: "query",
+  name: "month",
+  required: true,
+  schema: { type: "string", pattern: "^\\d{4}-\\d{2}$" },
+});
 add("/api/patients", "get", "List explicitly authorized patient profiles");
 add("/api/patients", "post", "Create the one owner profile", {
   type: "object",

@@ -3,6 +3,7 @@
 // here needs the server or a network.
 import { DateTime } from "luxon";
 import type { Language } from "../../../packages/ui/src/i18n";
+import { drugUse } from "../../../packages/domain/src/drug-uses";
 import { periodOf, periodNames } from "../../../packages/domain/src";
 import { summaryRows } from "./pdf";
 import type { Snapshot } from "./storage";
@@ -60,7 +61,10 @@ export function iosVersion(ua = navigator.userAgent): number | undefined {
  * is on, because calendar alerts appear on the lock screen.
  */
 export function buildCalendar(
-  s: Pick<Snapshot, "medications" | "regimens" | "profile">,
+  s: Pick<
+    Snapshot,
+    "medications" | "regimens" | "profile" | "automaticInformation"
+  >,
   lang: Language,
   options: { hideNames?: boolean; now?: DateTime } = {},
 ) {
@@ -90,6 +94,13 @@ export function buildCalendar(
         start: r.data.start,
         end: r.data.end,
       };
+      const use = drugUse(
+        row.medicine.data,
+        s.automaticInformation?.find(
+          (a) => a.medication_id === row.medicine.id,
+        ),
+        lang,
+      );
       g.lines.push(
         "• " +
           [row.medicine.data.name, row.medicine.data.strength]
@@ -98,7 +109,18 @@ export function buildCalendar(
           " — " +
           slot.amount +
           " " +
-          slot.unit,
+          slot.unit +
+          (use
+            ? "\n  " +
+              (use.kind === "general"
+                ? th
+                  ? "ใช้ทั่วไป: "
+                  : "Common use: "
+                : th
+                  ? "เหตุผลที่บันทึก: "
+                  : "Recorded reason: ") +
+              use.text
+            : ""),
       );
       // Several medicines at one time share the earliest start / latest end.
       if (r.data.start < g.start) g.start = r.data.start;
@@ -162,7 +184,7 @@ export function buildCalendar(
       lines.push(
         "BEGIN:VALARM",
         "ACTION:DISPLAY",
-        "DESCRIPTION:" + esc(title),
+        "DESCRIPTION:" + esc(title + "\n" + body),
         after === 0 ? "TRIGGER:PT0S" : "TRIGGER:PT" + after + "M",
         "END:VALARM",
       );

@@ -5,7 +5,7 @@ await transaction(async (c) => {
   await c.query(
     "CREATE TABLE IF NOT EXISTS schema_migrations(version integer PRIMARY KEY)",
   );
-  for (const version of [1, 2, 3, 4, 5, 6, 7, 8, 9])
+  for (const version of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
     if (
       !(
         await c.query("SELECT 1 FROM schema_migrations WHERE version=$1", [
@@ -14,7 +14,10 @@ await transaction(async (c) => {
       ).rowCount
     )
       await c.query(
-        await readFile(new URL(`./00${version}.sql`, import.meta.url), "utf8"),
+        await readFile(
+          new URL(`./${String(version).padStart(3, "0")}.sql`, import.meta.url),
+          "utf8",
+        ),
       );
 });
 await pool.end();

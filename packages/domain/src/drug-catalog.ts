@@ -54,28 +54,114 @@ const entries = [
     "cetirizine/about-cetirizine/",
   ],
 ] as const;
-export const drugCatalog: (DrugCard & { aliases: string[] })[] = entries.map(
-  ([name, thai, en, th, path]) => ({
-    id: "catalog:" + name,
+const additional = [
+  [
+    "enalapril",
+    "อีนาลาพริล",
+    "Lowers blood pressure",
+    "ลดความดันโลหิต",
+    "enalapril/",
+  ],
+  [
+    "atenolol",
+    "อะทีโนลอล",
+    "Lowers blood pressure",
+    "ลดความดันโลหิต",
+    "atenolol/",
+  ],
+  [
+    "bisoprolol",
+    "บิโซโพรลอล",
+    "Lowers blood pressure",
+    "ลดความดันโลหิต",
+    "bisoprolol/",
+  ],
+  [
+    "simvastatin",
+    "ซิมวาสแตติน",
+    "Lowers cholesterol",
+    "ลดคอเลสเตอรอล",
+    "simvastatin/",
+  ],
+  [
+    "gliclazide",
+    "ไกลคลาไซด์",
+    "Lowers blood sugar",
+    "ลดน้ำตาลในเลือด",
+    "gliclazide/",
+  ],
+  [
+    "allopurinol",
+    "อัลโลพูรินอล",
+    "Lowers uric acid to help prevent gout",
+    "ลดกรดยูริกเพื่อช่วยป้องกันเกาต์",
+    "allopurinol/",
+  ],
+  [
+    "amoxicillin",
+    "อะม็อกซีซิลลิน",
+    "Treats bacterial infections",
+    "รักษาการติดเชื้อแบคทีเรีย",
+    "amoxicillin/about-amoxicillin/",
+  ],
+  [
+    "furosemide",
+    "ฟูโรซีไมด์",
+    "Reduces excess fluid and swelling",
+    "ลดน้ำและอาการบวมจากน้ำเกิน",
+    "furosemide/",
+  ],
+  [
+    "clopidogrel",
+    "โคลพิโดเกรล",
+    "Helps prevent blood clots",
+    "ช่วยป้องกันลิ่มเลือด",
+    "clopidogrel/about-clopidogrel/",
+  ],
+  [
+    "levothyroxine",
+    "ลีโวไทรอกซีน",
+    "Treats an underactive thyroid",
+    "รักษาภาวะไทรอยด์ทำงานน้อย",
+    "levothyroxine/",
+  ],
+] as const;
+const shortUses: Record<string, { th: string; en: string }> = {
+  ...Object.fromEntries(
+    additional.map(([name, thai, en, th]) => [name, { th, en }]),
+  ),
+  metformin: { th: "ลดน้ำตาลในเลือด", en: "Lowers blood sugar" },
+  amlodipine: { th: "ลดความดันโลหิต", en: "Lowers blood pressure" },
+  atorvastatin: { th: "ลดคอเลสเตอรอล", en: "Lowers cholesterol" },
+  losartan: { th: "ลดความดันโลหิต", en: "Lowers blood pressure" },
+  omeprazole: { th: "ลดกรดในกระเพาะอาหาร", en: "Reduces stomach acid" },
+  paracetamol: { th: "บรรเทาปวดและลดไข้", en: "Relieves pain and fever" },
+  cetirizine: { th: "บรรเทาอาการแพ้", en: "Relieves allergy symptoms" },
+};
+export const drugCatalog: (DrugCard & { aliases: string[] })[] = [
+  ...entries,
+  ...additional,
+].map(([name, thai, en, th, path]) => ({
+  id: "catalog:" + name,
+  name,
+  ingredients: [name],
+  scope: "ingredient",
+  aliases: [
     name,
-    ingredients: [name],
-    scope: "ingredient",
-    aliases: [
-      name,
-      thai,
-      ...(name === "paracetamol" ? ["acetaminophen", "พาราเซตตามอล"] : []),
-    ],
-    description: "Ingredient information; not an exact product match",
-    uses: { th, en },
-    publisher: "NHS",
-    country: "UK",
-    sourceUrl: "https://www.nhs.uk/medicines/" + path,
-    sourceDate: null,
-    checkedAt: "2026-10-28T00:00:00.000Z",
-    validUntil: "2027-01-26T00:00:00.000Z",
-    review: "source-summary-not-clinically-reviewed",
-  }),
-);
+    thai,
+    ...(name === "paracetamol" ? ["acetaminophen", "พาราเซตตามอล"] : []),
+  ],
+  description: "Ingredient information; not an exact product match",
+  uses: { th, en },
+  shortUses: shortUses[name],
+  publisher: "NHS",
+  country: "UK",
+  sourceUrl: "https://www.nhs.uk/medicines/" + path,
+  sourceDate: null,
+  checkedAt: "2026-10-28T00:00:00.000Z",
+  validUntil: "2027-01-26T00:00:00.000Z",
+  review: "source-summary-not-clinically-reviewed",
+}));
 export function searchCatalog(query: string) {
   const q = normalizeDrugQuery(query);
   // Exact aliases only. No substring guessing, brand mapping or combination splitting.

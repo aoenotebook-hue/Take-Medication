@@ -10,6 +10,9 @@ export const drugCardSchema = z.object({
     th: z.string().max(4000).optional(),
     en: z.string().max(12000),
   }),
+  shortUses: z
+    .object({ th: z.string().max(100), en: z.string().max(100) })
+    .optional(),
   publisher: z.string().max(100),
   country: z.string().max(30),
   sourceUrl: z.string().url().refine(safeDrugSource),

@@ -1,4 +1,4 @@
--- Generated from db/001.sql through db/009.sql by npm run build:bootstrap.
+-- Generated from db/001.sql through db/010.sql by npm run build:bootstrap.
 -- Run in the selected Supabase project's SQL editor. No synthetic patient data is seeded.
 -- Existing numbered migrations are skipped; failures roll back the entire transaction.
 BEGIN;
@@ -134,6 +134,31 @@ DO $$ DECLARE r text; BEGIN
   END LOOP;
 END $$;
 INSERT INTO schema_migrations VALUES(9);
+
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE version=10) THEN
+CREATE TABLE medication_information_automatic(
+ medication_id uuid PRIMARY KEY REFERENCES medications ON DELETE CASCADE,
+ patient_id uuid NOT NULL REFERENCES patients ON DELETE CASCADE,
+ identity_key text NOT NULL,
+ state text NOT NULL CHECK(state IN ('pending','matched','not-found','needs-review','unavailable')),
+ card jsonb,
+ checked_at timestamptz NOT NULL DEFAULT now(),
+ retry_at timestamptz NOT NULL DEFAULT now(),
+ mapping_id text
+);
+CREATE INDEX medication_information_automatic_patient ON medication_information_automatic(patient_id);
+CREATE INDEX medication_information_automatic_retry ON medication_information_automatic(retry_at);
+ALTER TABLE medication_information_automatic ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE medication_information_automatic FROM PUBLIC;
+DO $$ DECLARE r text; BEGIN
+ FOREACH r IN ARRAY ARRAY['anon','authenticated'] LOOP
+  IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname=r) THEN
+   EXECUTE format('REVOKE ALL ON TABLE public.medication_information_automatic FROM %I',r);
+  END IF;
+ END LOOP;
+END $$;
+INSERT INTO schema_migrations VALUES(10);
 
   END IF;
 END $medication_bootstrap$;

@@ -272,6 +272,10 @@ test("row edit and delete buttons, daily schedule view, and clear all data", asy
   await page.getByRole("button", { name: "ปิด", exact: true }).click();
   // Clear all data removes everything but keeps the profile name and sign-in.
   await page.getByRole("button", { name: "การตั้งค่า", exact: true }).click();
+  await page
+    .locator(".settings-fold > summary")
+    .filter({ hasText: "ล้างข้อมูล / เริ่มใหม่" })
+    .click();
   await page.getByRole("button", { name: /ล้างข้อมูลทั้งหมด/ }).click();
   await expect(page.getByText(/ล้างข้อมูลทั้งหมดแล้ว/)).toBeVisible();
   await expect(rowOf("Synthetic keep " + stamp)).toHaveCount(0);
@@ -478,6 +482,10 @@ test.describe("iPhone 7 (iOS 15) has no web push", () => {
     await form.getByRole("button", { name: /^✓ บันทึก$/ }).click();
     await syncNow(page);
     await page.getByRole("button", { name: "การตั้งค่า", exact: true }).click();
+    await page
+      .locator(".settings-fold > summary")
+      .filter({ hasText: "ตั้งค่าการแจ้งเตือน" })
+      .click();
     await expect(
       page.getByText(/iPhone 7 ใช้ iOS 15\) รับการแจ้งเตือนจากเว็บแอปไม่ได้/),
     ).toBeVisible();

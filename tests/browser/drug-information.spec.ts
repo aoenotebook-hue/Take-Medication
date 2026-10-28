@@ -85,6 +85,9 @@ async function medicine(page: Page) {
   await page
     .getByRole("combobox", { name: "สถานะ", exact: true })
     .selectOption("all");
+  await expect(page.locator(".med-row", { hasText: name })).toContainText(
+    "ลดน้ำตาลในเลือด",
+  );
   await page
     .locator(".med-row", { hasText: name })
     .getByRole("button", { name: /เปิดข้อมูลยา/ })
@@ -233,4 +236,37 @@ test("closing a pending lookup cannot display its late response in the app", asy
   await expect(page.getByText("STALE RESPONSE", { exact: true })).toHaveCount(
     0,
   );
+});
+
+test("monthly report is readable from the simplified Settings screen", async ({
+  page,
+}) => {
+  await medicine(page);
+  await page.getByRole("button", { name: "ปิด", exact: true }).click();
+  await page.getByRole("button", { name: "การตั้งค่า", exact: true }).click();
+  await expect(page.locator(".settings-fold[open]")).toHaveCount(0);
+  await page.screenshot({
+    path: "test-results/settings-mobile.png",
+    fullPage: true,
+  });
+  await page
+    .getByRole("button", { name: "รายงานรายเดือน", exact: true })
+    .click();
+  const report = page.getByRole("dialog");
+  await expect(report.getByRole("table")).toBeVisible();
+  await expect(
+    report.getByRole("columnheader", {
+      name: "ไม่มีบันทึก (ครั้ง)",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(report).toContainText("การไม่มีบันทึกไม่ได้ยืนยันว่าลืมใช้ยา");
+  await expect(report).toContainText("Asia/Bangkok");
+  await page.screenshot({
+    path: "test-results/monthly-report-mobile.png",
+    fullPage: true,
+  });
+  expect(
+    (await new AxeBuilder({ page }).include("dialog").analyze()).violations,
+  ).toEqual([]);
 });

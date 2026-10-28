@@ -126,7 +126,7 @@ export function DrugInformation({
         const card = drugCardSchema.parse(r.card);
         if (!safeDrugSource(card.sourceUrl)) return;
         setSelected(card);
-        setConfirmed(true);
+        setConfirmed(r.state === "matched");
         await cache(card, n);
       } else {
         setSelected(undefined);
@@ -149,8 +149,8 @@ export function DrugInformation({
               "Compare the ingredient with your label before reading.",
             )
           : t(
-              "ไม่พบในข้อมูลสรุป 7 รายการ ลองชื่อสามัญ หรือค้นหาฉลากภาษาอังกฤษ",
-              "No match in the seven-ingredient summary catalog. Try the generic name or search English labels.",
+              "ไม่พบในข้อมูลสรุป ลองชื่อสามัญ หรือค้นหาฉลากภาษาอังกฤษ",
+              "No match in the summary catalog. Try the generic name or search English labels.",
             ),
       );
       return;

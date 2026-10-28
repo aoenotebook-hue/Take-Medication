@@ -1,5 +1,11 @@
 import "dotenv/config";
-import { refreshHorizon, enqueueJobs, dispatchOne, heartbeat } from "./worker.js";
+import {
+  refreshHorizon,
+  enqueueJobs,
+  dispatchOne,
+  heartbeat,
+} from "./worker.js";
+import { refreshAutomaticBatch } from "../../api/src/automatic-drug-information.js";
 if (
   process.env.NODE_ENV === "production" &&
   process.env.PUSH_ADAPTER === "simulated"
@@ -17,6 +23,7 @@ while (!stop) {
     }
     await enqueueJobs();
     for (let i = 0; i < 100 && (await dispatchOne()); i++) {}
+    await refreshAutomaticBatch().catch(() => {});
     await heartbeat();
   } catch {
     console.error(

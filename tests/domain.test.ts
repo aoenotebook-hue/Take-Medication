@@ -206,6 +206,32 @@ describe("Dose projections", () => {
     expect(many.detail.body.split("\n")).toHaveLength(9);
     expect(many.detail.body).toContain("and 2 more");
   });
+  it("places short uses under names while preserving neutral privacy text and bounded payloads", () => {
+    const p = reminderPush("id", "tag", "2026-10-28T00:00:00Z", "en", "08:00", [
+      { name: "Amlodipine", use: "Lowers blood pressure" },
+    ]);
+    expect(p.detail.body).toBe(
+      "• Amlodipine\n  Common use: Lowers blood pressure",
+    );
+    expect(p.body).not.toContain("pressure");
+    const large = reminderPush(
+      "id",
+      "tag",
+      "2026-10-28T00:00:00Z",
+      "th",
+      "08:00",
+      Array.from({ length: 8 }, () => ({
+        name: "ยา".repeat(80),
+        strength: "500 mg",
+        amount: "1",
+        unit: "เม็ด",
+        use: "ลดความดันโลหิต",
+      })),
+    );
+    expect(new TextEncoder().encode(JSON.stringify(large)).length).toBeLessThan(
+      3500,
+    );
+  });
   it("every clock time belongs to one part of the day", () => {
     expect(
       [
