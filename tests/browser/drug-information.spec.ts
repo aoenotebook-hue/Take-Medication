@@ -99,7 +99,7 @@ test("Thai medicine uses remain separate from personal purpose and survive offli
   page,
   context,
 }) => {
-  await medicine(page);
+  const { name } = await medicine(page);
   await page
     .getByRole("button", { name: "ค้นหาข้อมูลสรุป", exact: true })
     .click();
@@ -129,8 +129,18 @@ test("Thai medicine uses remain separate from personal purpose and survive offli
   ).toBeVisible();
   const axe = await new AxeBuilder({ page }).analyze();
   expect(axe.violations).toEqual([]);
-  await page.locator(".drug-information > summary").click();
+  await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
   await context.setOffline(true);
+  // A cold reopen exercises IndexedDB restoration, not retained React state.
+  await page.reload();
+  await page.getByRole("button", { name: "รายการยา", exact: true }).click();
+  await page
+    .getByRole("combobox", { name: "สถานะ", exact: true })
+    .selectOption("all");
+  await page
+    .locator(".med-row", { hasText: name })
+    .getByRole("button", { name: /เปิดข้อมูลยา/ })
+    .click();
   await page.locator(".drug-information > summary").click();
   await expect(page.locator(".drug-source-text")).toContainText(
     "เบาหวานชนิดที่ 2",

@@ -45,7 +45,9 @@ export function labelCard(input: unknown): DrugCard | undefined {
   if (!uses.trim()) return;
   const plain = (s: string) =>
     s.replace(/<[^>]*>/g, "").replace(/[\u0000-\u0008]/g, "");
-  return drugCardSchema.parse({
+  // Provider records are independent. A malformed normalized card must not
+  // discard every otherwise valid result in the same response.
+  const card = drugCardSchema.safeParse({
     id: "label:" + l.set_id,
     name: (
       l.openfda.brand_name?.[0] ||
@@ -75,6 +77,7 @@ export function labelCard(input: unknown): DrugCard | undefined {
     validUntil: new Date(Date.now() + 86400000).toISOString(),
     review: "source-summary-not-clinically-reviewed",
   });
+  return card.success ? card.data : undefined;
 }
 // Every URL is constructed here; no patient identity, purpose, URL or full regimen
 // is passed upstream. Injectable fetch makes contracts testable without live requests.

@@ -6,6 +6,10 @@ Node 24, isolated PostgreSQL 17, Linux Chromium and synthetic data. `npm run typ
 
 Browser scenarios now use independent simulated device IPs through the owned local test proxy. This fixes test-suite exhaustion of the unchanged 120/minute production limiter; no production rate limit or behavioral assertion was relaxed. Existing chunk-size/PWA deprecation warnings remain. Provider-contract tests use synthetic fixtures; direct live provider access, production migration/deployment, physical iPhone behavior and independent clinical/native Thai review remain pending. See [medicine-information setup](drug-information.md).
 
+## Follow-up medicine-information check — 28 October 2026
+
+The live migration, Vercel deployment and recurring scheduler responses were healthy. A synthetic provider-response regression reproduced an error where one unusable ingredient record discarded otherwise valid labels. Normalized records now validate independently and skip unusable entries. The new regression failed before the fix and passed afterward. The complete local suite passed **92 tests**; typecheck, emitted API startup and production build passed. All three medicine-information browser tests passed, with offline coverage strengthened to reload the entire app and restore a saved card from IndexedDB. A fresh synthetic seed was restored before the full suite because an earlier browser reset scenario had removed its expected fixture. Production patient records were not used for testing.
+
 ## Earlier application/hosting record
 
 Earlier application/hosting regression run: **13 October 2026 (UTC)** using Node 24, PostgreSQL 17 in an isolated local Docker container, and installed Linux Chromium. The backup/PDF visual drills below were performed on 12 October. Synthetic records only. This is an implementation verification record, not a clinical or production certification.

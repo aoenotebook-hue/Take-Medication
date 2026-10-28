@@ -29,6 +29,25 @@ const reply = (results: unknown[]) =>
     headers: { "content-type": "application/json" },
   });
 describe("medicine information", () => {
+  it("keeps valid labels when another provider record has an unusable ingredient", async () => {
+    const invalid = {
+      ...label,
+      openfda: { ...label.openfda, generic_name: [""] },
+    };
+    const htmlOnly = {
+      ...label,
+      openfda: { ...label.openfda, generic_name: ["<span></span>"] },
+    };
+    const fetcher = vi.fn(async () =>
+      reply([invalid, htmlOnly, label]),
+    ) as unknown as typeof fetch;
+    const result = await searchDrugInformation("synthetic", true, fetcher);
+    expect(result.provider).toBe("available");
+    expect(result.cards).toHaveLength(1);
+    expect(result.cards[0].id).toBe("label:" + setId);
+    expect(() => labelCard(invalid)).not.toThrow();
+    expect(labelCard(invalid)).toBeUndefined();
+  });
   it("matches exact Thai/English ingredient aliases without guessing brands/combinations", () => {
     expect(searchCatalog("  METFORMIN  ")[0].scope).toBe("ingredient");
     expect(searchCatalog("เมตฟอร์มิน")[0].id).toBe("catalog:metformin");
