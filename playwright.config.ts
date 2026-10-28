@@ -15,7 +15,7 @@ export default defineConfig({
   webServer: [
     {
       command:
-        "LOCAL_DEMO=true PORT=3001 PUBLIC_APP_URL=http://localhost:4173 npm run start:api",
+        "LOCAL_DEMO=true TRUST_PROXY=1 PORT=3001 PUBLIC_APP_URL=http://localhost:4173 npm run start:api",
       url: "http://localhost:3001/api/health",
       reuseExistingServer: false,
     },

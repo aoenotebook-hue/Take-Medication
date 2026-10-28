@@ -1,0 +1,324 @@
+MEDICATION PWA — MEDICINE INFORMATION AND PATIENT UNDERSTANDING
+AI coding plan addendum, version 1.0
+Prepared: 28 October 2026, Asia/Bangkok
+Repository: https://github.com/aoenotebook-hue/Take-Medication
+
+1. REQUEST AND SCOPE
+
+Add a way to look up medicines a patient takes and explain what each medicine
+is commonly used for. Help patients understand their medicines in clear Thai,
+with English available, reliable sources, and a safe response when a medicine
+cannot be identified confidently.
+
+This is an addition to the earlier improvement plan, not an implementation or
+a claim that the feature is live. Apply it after the earlier privacy/correctness
+fixes and before the next patient pilot. Keep the three main tabs and put this
+feature inside My medicines and medicine details. No new main tab is required.
+
+Current source reviewed: 9e2101c680eab8857a3a1e8d0d469120c65be07e.
+Read docs/improvement-progress.md before implementation: the current repository
+already records fixes to many findings from the 14 October improvement plan.
+Recheck those fixes instead of reopening them or restoring older code. Current
+sign-in uses phone/PIN; this feature does not require changing authentication.
+
+Relevant current source:
+- apps/web/src/main.tsx: My medicines, medicine detail dialog, MedicineForm.
+- apps/web/src/autofill.ts: label-entry helpers; these are NOT a drug identity
+  database and must not be used to infer which medicine a patient takes.
+- apps/web/src/storage.ts: account/patient-scoped IndexedDB data and cleanup.
+- apps/web/src/pdf.ts and apps/web/src/format.ts: summary rendering.
+- packages/domain/src/index.ts: medicationSchema contains name, generic, brand,
+  strength, form, route, purpose, productType, source, and verified.
+- packages/ui/src/i18n.ts: translations.
+- apps/api/src/server.ts and apps/api/src/service.ts: authentication, membership
+  authorization, snapshots, idempotent operations, and audit.
+- db/: existing numbered migrations; choose the next unused migration number.
+
+2. PATIENT EXPERIENCE
+
+My medicines:
+- Show the patient's existing medicine names, photos, and prescription instructions.
+- Add a labeled action: "ยานี้ใช้เพื่ออะไร" / "What is this medicine used for?"
+  on a medicine card and in medicine details.
+- Add "ค้นหาข้อมูลยา" / "Find medicine information" within My medicines. It can
+  search by entered generic/brand name and let the person select an existing
+  medicine as the starting point. A person can search without editing a regimen.
+- Offer a "Learn about my medicines" list that starts from saved medicines and
+  opens information one medicine at a time. Do not send an entire patient profile
+  or medicine list to an external service in the background.
+
+After the person opens the action:
+1. Start with saved generic/brand/name, strength, form, and route as matching
+   evidence. Show the entered label so the person knows what is being searched.
+2. If needed, show candidate names, ingredients, strength, form, route, and
+   country/source. Ask the person to compare the package or ask a pharmacist.
+3. Show a plain-language education card only at the supported identity level.
+   An ingredient match may support general ingredient information, but it must
+   not be presented as a confirmed match to the patient's exact product.
+4. If the name is unclear or no suitable result exists, say so. Let the person
+   correct the search text, inspect their label, open an approved source, or ask
+   their pharmacist. Keep ordinary medicine entry/dose recording available.
+
+Education card layout:
+- Medicine identity: original name plus matched generic/brand; indicate whether
+  the information concerns an ingredient or the exact product/formulation.
+- "Common uses" / "โดยทั่วไปยานี้ใช้เพื่อ": a short, readable explanation
+  supported by the selected source, typically one to three bullets.
+- A short explanation of technical terms where necessary; do not overwhelm the
+  first screen with a long monograph or a list of alarming possible conditions.
+- "Why it was prescribed for me" / "เหตุผลที่แพทย์สั่งยานี้ให้ฉัน": the existing
+  user-entered purpose, clearly labeled with its source. If not recorded, show
+  "Not recorded — ask your doctor or pharmacist" rather than guessing.
+- Source/publisher, country, original language, source revision date when known,
+  last checked date, and an Open source link. Unknown dates remain unknown.
+- A short statement: medicines may have several uses; the person's reason may
+  differ. The card does not replace their label or clinician's instructions.
+- A clear Back/Close action; leave the patient identity visible.
+
+Use 20 px base text, large-text preference, Thai wrapping, keyboard/VoiceOver
+labels, sufficient contrast, and large touch targets. Display errors inline with
+Retry or Edit search; never show raw JSON or medical code IDs as the main content.
+
+3. CONTENT AND MATCHING RULES
+
+Keep general drug knowledge separate from the patient's own record:
+- Never infer that the patient has a disease because a medicine has that use.
+- Never auto-fill or overwrite medication.purpose with a general indication.
+  Keep purpose as the user's recorded reason. If an optional "Record what my
+  clinician told me" action is offered, it is an explicit reviewed edit by an
+  owner/editor, with provenance, not a background lookup side effect.
+- Searching/viewing information never changes dose, timing, food instructions,
+  route, regimen status, verification status, or reminder behavior.
+- Do not turn general use information into a recommendation to start, stop,
+  substitute, or change a medicine. No personalized diagnosis, interaction engine,
+  dose recommendation, missed-dose decision, or inferred off-label indication.
+- An absent indication or source mismatch does not mean a prescription is wrong.
+- Do not use a medication's existing verified boolean to claim the education
+  card has professional review. Track content review separately.
+
+Identity rules:
+- Support entered Thai/English names, known aliases, generic/brand synonyms, and
+  multiple ingredients. Preserve the original label text and provenance.
+- Normalize spelling for search; never silently accept the closest fuzzy match.
+- Similar names, ambiguous abbreviations, or Thai brands with no verified mapping
+  require selection/review. Do not map by pill color, shape, photo, or appearance.
+- Strength, dosage form, route, release type, and ingredient combinations matter.
+  Do not treat immediate/extended release, eye/oral, cream/tablet, or different
+  combination products as interchangeable.
+- A generic ingredient-level card must explicitly state its scope. Product-level
+  claims require a compatible product match. Do not merge indication lists across
+  several single ingredients and present that as a combination product's uses.
+- Distinguish human medicines from veterinary products, supplements, and traditional
+  products. Do not return a pharmaceutical indication for an unverified supplement.
+- If an identity field changes, mark the stored match as needing review and drop
+  the old card from the current medicine view until its match is revalidated.
+
+Do not generate clinical explanations freely from an LLM's memory or search
+snippets. MVP explanations should be reviewed original summaries or permitted
+structured source content. Thai medical translations need a native Thai clinical
+review before being shown as reviewed content. Machine-translated drafts are
+not automatically published. If only English is available, label it clearly and
+offer the original source; do not pretend the provider supplies Thai content.
+
+4. SOURCE STRATEGY AND RESEARCH
+
+Primary-source documentation was checked on 28 October 2026. Reconfirm API terms,
+access, rate limits, licensing, and clinical scope before implementation.
+
+Preferred Thai starting point:
+Thai FDA Medicines Regulation Division publishes reference patient information
+leaflets (PIL) and professional documents, organized by drug, form, strength,
+and publication date:
+https://drug.fda.moph.go.th/drug-information
+Use relevant human patient leaflets first where available. The publication page
+is not evidence of a supported bulk-search API or permission to republish all
+documents. Start with a maintained source/identity index and links; verify reuse
+rights before caching, extracting, or translating source text. Do not scrape
+unbounded PDFs during a patient's lookup or claim complete Thai-brand coverage.
+
+Supplementary identification:
+RxNorm API provides standardized drug concepts and matching functions:
+https://lhncbc.nlm.nih.gov/RxNav/APIs/RxNormAPIs.html
+Use it as an optional identity/mapping aid, not as proof of why a patient takes
+a medicine. Verify coverage for Thai products; a missing RxCUI is not proof a
+medicine is invalid. Approximate matches remain candidates, not confirmations.
+
+Supplementary patient education links:
+MedlinePlus Connect can return medication education links using RxCUI/NDC and
+supported text requests. The documented service is English/Spanish, not Thai:
+https://medlineplus.gov/medlineplus-connect/web-service/
+Drug monographs include copyrighted licensed content; an API response or a
+government-hosted URL does not give blanket permission to mirror/translate it:
+https://medlineplus.gov/about/using/usingcontent/
+Link to appropriate education pages and use only content permitted by the
+service/rights holder; do not copy complete monographs into this application.
+
+Supplementary product labeling:
+DailyMed's versioned web service exposes Structured Product Labeling (SPL):
+https://dailymed.nlm.nih.gov/dailymed/app-support-web-services.cfm
+It can help locate source product labels and their versions. It is US-oriented,
+not a complete Thai medicine directory. Product identity, formulation, jurisdiction,
+and relevant section must be checked; do not show a professional label unedited
+as a Thai patient explanation or treat a listing as universal regulatory approval.
+
+MVP provider choice:
+- Build a provider interface and a small reviewed Thai index sourced from
+  approved materials; document actual coverage and reuse permissions.
+- Add at least one real documented provider integration for lookup/link resolution,
+  with deterministic test fixtures. RxNorm plus MedlinePlus Connect is a possible
+  combination; choose after a short coverage trial on a pharmacist-selected list.
+- Show reviewed in-app uses for supported identities. For other identities, show
+  matched original-source links or an honest unavailable/needs-review state.
+- Do not ship a fake live lookup backed only by a tiny hardcoded list. Clearly
+  state which results come from the reviewed catalog and which from a provider.
+- Keep runtime costs small. No paid LLM provider or additional mandatory secret
+  is needed for the default MVP; a failed lookup provider must not crash the core app.
+
+5. IMPLEMENTATION ORDER FOR THE AI CODING TOOL
+
+DI-1 — Identity/content model and provider contract
+Before coding, recheck the current repository and existing progress. Define typed
+search candidates, identity levels, content provenance, review states, and error
+codes in a shared module. Suggested new locations:
+  packages/domain/src/drug-information.ts
+  apps/api/src/drug-information/
+
+Proposed non-patient catalog model:
+  canonical ID; names/aliases; ingredients; optional compatible strength/form/
+  route/release type; country; supported identity scope; source IDs and URLs;
+  source version/date; content language; short common-use statements with source
+  references; review status/reviewer reference/review date; retrieval/expiry dates;
+  content checksum/version; permitted display/cache/translation rights.
+
+Proposed private association model:
+  patient ID; medication ID and identity revision/fingerprint; selected catalog/
+  provider ID; identity scope; match method; confirming actor/date; review-needed
+  state. Do not store the patient's diagnosis or full profile in the public catalog.
+
+Selection is not professional confirmation of the patient's diagnosis or label.
+Store the association separately from immutable regimen instructions. Use an
+additive migration with RLS/browser grants matching existing app conventions.
+Do not write a source table into a schema that browsers can read without intent.
+
+DI-2 — Authorized search and information API
+Suggested routes; align with the current API style and update OpenAPI:
+  POST /api/patients/:id/medications/:medicationId/information/search
+  GET  /api/patients/:id/medications/:medicationId/information
+  POST /api/patients/:id/medications/:medicationId/information/match
+
+Search body contains only bounded search text/language and a selected scope;
+the backend obtains authorized saved medicine identity. Viewing/searching may be
+available to viewers. Persisting/replacing a medicine match requires owner/editor
+access. Derive actor from the session; check the medication belongs to the patient.
+Use revision checks, stable operation IDs, and audit for association changes.
+Never accept an arbitrary upstream URL from the browser.
+
+Return explicit states: matched, needs-selection, needs-review, not-found,
+unsupported-language, source-unavailable, cached, and stale. Preserve the difference
+between a known match with unavailable content and no reliable identity match.
+Bound query length, results, pagination, request duration, retries, and per-actor
+rate limits. Cancel stale UI requests and reject stale writes after identity edits.
+
+DI-3 — Medicine UI and Thai education cards
+Suggested component location: apps/web/src/components/DrugInformation.tsx.
+Reuse the current dialog/formatting/i18n patterns instead of growing the main App
+file with another large feature. Add the entry points and candidate confirmation
+flow described above. Do not require an existing purpose field to search.
+Keep already recorded personal purpose visible but separate from general uses.
+Prevent double requests and show loading/error/no-match states with recovery.
+Cancel or ignore old requests on patient, medication, identity, or account switch.
+
+DI-4 — Offline/provenance behavior
+Cache permitted catalog information by canonical identity, language, and content
+version; keep patient associations/read history account/patient-scoped. An explicit
+source/date/refresh-needed label accompanies cached content. Content validity and
+clinical review dates are not replaced by the date it was downloaded. Expired,
+withdrawn, or unreviewed summaries must not appear as current reviewed information.
+Use the original source link or an unavailable state when rights prohibit offline
+copying. Do not promise offline information that was never downloaded.
+Purge private associations and reading state on sign-out/revocation/account change
+using the existing guarded cleanup. The core offline medicine list still works
+when drug information has never loaded or a provider is down.
+
+DI-5 — Tests, content review, and rollout
+Add meaningful provider-contract, domain, API authorization, and browser tests.
+Use mocked provider fixtures for CI; live provider checks are a separate smoke
+test. Request a pharmacist review of a small representative Thai/English catalog,
+native Thai terminology, disambiguation, and patient comprehension before release.
+Document source coverage, terms, update/review process, provider configuration,
+and what happens if a source withdraws/changes content. Enable the feature only
+when its real provider/approved catalog is available; do not display a working
+search button wired to simulated data in production.
+
+6. PRIVACY AND SECURITY REQUIREMENTS
+
+- External lookup receives only the minimum necessary drug identity/query and
+  language. No patient name/ID, phone, DOB, diagnoses, allergies, actual dose logs,
+  full regimen, photos, or auth token. Do not send the purpose note to a provider.
+- Use the backend provider adapter to keep credentials and private context out
+  of browser requests. Do not log search bodies or medication identities tied to
+  accounts; a hash of a predictable drug name is not a privacy guarantee.
+- Approved HTTPS hosts/endpoints only; validate redirects, response size/type,
+  timeouts, and returned links. Prevent SSRF, arbitrary URL fetch, XML external
+  entities, HTML/script injection, and unsafe PDF parsing. No downloaded provider
+  text becomes executable HTML or instructions for an AI tool.
+- Open source links only by explicit action, with no patient data/referrer.
+  Avoid third-party embeds, tracking pixels, advertisements, or bulk web searches
+  containing the patient's medication list.
+- Public catalog caching may be shared only when it contains no private search,
+  account/patient association, or reading history. Personalized API responses use
+  no-store; service workers must not cache them in shared response caches.
+- Retain membership/role checks and account-switch generation guards on every
+  request and IndexedDB write. An outsider cannot enumerate another patient's
+  matches or infer their medicines through response content or cache keys.
+- Missing optional source credentials/network access degrades this feature only;
+  do not weaken the app's existing production configuration or auth guards.
+
+7. REQUIRED ACCEPTANCE TESTS
+
+DI-A1: Exact supported generic/product lookup shows common uses and a source.
+DI-A2: Thai/English aliases work only with established mappings; an unknown Thai
+       brand, ambiguous abbreviation, or similar spelling never silently matches.
+DI-A3: Immediate/extended-release, oral/eye/topical, strengths, and combination
+       ingredients are distinguished. Ingredient-level fallback is clearly labeled.
+DI-A4: Search does not modify purpose, dose, regimen, verified, or reminder state.
+       Several general indications do not become the patient's diagnosis.
+DI-A5: Personal purpose remains separately labeled; missing reason stays unknown.
+DI-A6: Source unavailable, empty response, timeout, 429, malformed data, unavailable
+       Thai content, and unreviewed content have honest recoverable states.
+DI-A7: Owner/editor can confirm an association; viewer can read/search but cannot
+       write; outsider/revoked membership/deleted account is denied.
+DI-A8: Switching patient/account or editing drug identity while a search is pending
+       never displays/caches the old response under the new context.
+DI-A9: General catalog content, private matches, and offline data obey their scopes;
+       sign-out purges private data; stale content shows its provenance/state.
+DI-A10: Upstream request spy confirms absence of patient/phone/purpose/regimen data;
+        logs and errors contain no private query payloads or provider secrets.
+DI-A11: Malicious source URLs, redirect hosts, HTML, XML entities, oversized responses,
+        and source text containing instructions are rejected/safely handled.
+DI-A12: Thai/English, large text, narrow iPhone layout, keyboard/axe and VoiceOver
+        labels work. A person can open a medicine's information within two taps.
+DI-A13: Provider/catalog version changes invalidate incompatible matches/content;
+        an updated retrieval time alone cannot mark an old review current.
+DI-A14: Ordinary medicine entry, doses, offline sync, doctor PDF, push and calendar
+        reminders continue working when the new provider is disabled/unreachable.
+
+Run current relevant regression commands against an isolated synthetic database:
+  npm run typecheck
+  npm run check:api-build
+  npm test
+  npm run build
+  npm run test:browser
+Update docs/openapi.json and docs/improvement-progress.md with real results.
+Do not reuse the 14 October test counts as evidence for the current revision.
+No application tests were rerun for this documentation-only addendum.
+
+8. FIRST RELEASE DONE CRITERIA
+
+A patient can choose a saved medicine, see a reliably matched plain-language
+explanation of common uses with a real source, and distinguish that from their
+own recorded prescribing reason. Unsupported identities receive an honest next
+step. No automatic prescribing, diagnosis, disclosure of a patient's medicine
+list, or alteration of existing instructions is introduced. Coverage, language,
+source rights, clinical review status, tests, and remaining manual checks are
+documented for the exact release commit.

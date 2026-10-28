@@ -5,6 +5,27 @@
   font-size: 20px;
   line-height: 1.55;
 }
+.drug-information {
+  border: 1px solid #8aa29a;
+  border-radius: 12px;
+  padding: 0.7rem;
+  margin: 1rem 0;
+  overflow-wrap: anywhere;
+}
+.drug-information > summary {
+  min-height: 44px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.drug-information > summary:focus-visible {
+  outline: 3px solid #af580e;
+  outline-offset: 3px;
+}
+.drug-source-text {
+  white-space: pre-wrap;
+  max-height: 24rem;
+  overflow-y: auto;
+}
 * {
   box-sizing: border-box;
 }

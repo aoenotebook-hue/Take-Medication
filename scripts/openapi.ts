@@ -49,6 +49,40 @@ const add = (
     });
   }
 };
+add(
+  "/api/patients/{id}/medications/{medicationId}/information",
+  "get",
+  "Read separately saved education source; needs-review after medicine identity changes",
+);
+add(
+  "/api/patients/{id}/medications/{medicationId}/information/search",
+  "post",
+  "Authorized drug lookup; external requests contain only search text, never patient details",
+  {
+    type: "object",
+    additionalProperties: false,
+    required: ["query"],
+    properties: {
+      query: { type: "string", minLength: 2, maxLength: 100 },
+      remote: { type: "boolean", default: false },
+    },
+  },
+);
+add(
+  "/api/patients/{id}/medications/{medicationId}/information/match",
+  "post",
+  "Owner/editor confirms a source association; prescription fields stay unchanged",
+  {
+    type: "object",
+    additionalProperties: false,
+    required: ["id", "identityKey", "confirmed"],
+    properties: {
+      id: { type: "string", pattern: "^(catalog:[a-z]+|label:[a-f0-9-]{36})$" },
+      identityKey: { type: "string", maxLength: 2000 },
+      confirmed: { type: "boolean", const: true },
+    },
+  },
+);
 add("/api/patients", "get", "List explicitly authorized patient profiles");
 add("/api/patients", "post", "Create the one owner profile", {
   type: "object",

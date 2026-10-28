@@ -63,6 +63,7 @@ import {
   type Meal,
 } from "./autofill";
 import type { Operation } from "../../api/src/service";
+import { DrugInformation } from "./components/DrugInformation";
 registerSW({ immediate: true });
 const auth =
   import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY
@@ -98,11 +99,17 @@ async function dropBrowserSubscription() {
     /* best effort */
   }
 }
-async function api(path: string, body?: any, method = body ? "POST" : "GET") {
+async function api(
+  path: string,
+  body?: any,
+  method = body ? "POST" : "GET",
+  signal?: AbortSignal,
+) {
   const headers: any = { Authorization: "Bearer " + token };
   if (body !== undefined) headers["Content-Type"] = "application/json";
   const r = await fetch("/api" + path, {
     method,
+    signal,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -3373,7 +3380,7 @@ function App() {
           />
         </Modal>
       )}
-      {detail && view && (
+      {detail && view && view.medications.some((m) => m.id === detail.id) && (
         <Modal
           title={detail.data.name + " · " + view.profile.data.displayName}
           close={() => setDetail(undefined)}
@@ -3471,6 +3478,36 @@ function App() {
                     ⚠ {x}
                   </p>
                 ))}
+                <DrugInformation
+                  key={
+                    generation +
+                    ":" +
+                    actor +
+                    ":" +
+                    patient +
+                    ":" +
+                    detail.id +
+                    ":" +
+                    JSON.stringify(
+                      view.medications.find((m) => m.id === detail.id)?.data,
+                    )
+                  }
+                  actor={actor}
+                  patientId={patient}
+                  medicine={view.medications.find((m) => m.id === detail.id)!}
+                  lang={lang}
+                  readonly={view.role === "viewer"}
+                  request={api}
+                  isCurrent={(() => {
+                    const who = actor,
+                      started = generation,
+                      id = patient;
+                    return () =>
+                      who === actor &&
+                      started === generation &&
+                      patientRef.current === id;
+                  })()}
+                />
                 {view.role !== "viewer" && (
                   <div className="detail-actions">
                     <button

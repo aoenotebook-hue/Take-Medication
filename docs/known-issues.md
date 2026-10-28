@@ -1,5 +1,7 @@
 # Known limitations and release gates
 
+- Medicine information provides seven original source-based Thai/English ingredient summaries and optional English US label lookup, not comprehensive Thai-brand identification. Independent clinical/Thai review and live provider/iPhone checks are pending. Migration 009 is required before deployment; see [medicine information](drug-information.md). No diagnosis or personal prescribing reason is inferred from lookup results.
+
 - No Supabase project credentials, real VAPID subscriptions or staging HTTPS host were supplied. Their integration code and configuration exist, but live managed email delivery, private-storage policy, real push acceptance and runtime-role grants need staging verification.
 - Physical iPhone/Home Screen, Focus, locked-screen and revoked-permission tests are unrun. No notification display/delivery guarantee or supported iOS test result is claimed.
 - Thai PDF font embedding and automated 1/10/30-medicine generation were tested; rendered synthetic PDFs were visually inspected. Native Thai typography/terminology review, VoiceOver and pharmacist/clinician review remain unrun. Secondary operational labels/errors still include English or bilingual text and need the native-language review before an older-adult pilot.

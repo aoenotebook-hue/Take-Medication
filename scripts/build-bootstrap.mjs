@@ -1,5 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
-const versions = [1, 2, 3, 4, 5, 6, 7, 8];
+const versions = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 const chunks = [];
 for (const version of versions) {
   const sql = await readFile(`db/00${version}.sql`, "utf8");
@@ -9,7 +9,7 @@ for (const version of versions) {
     `  IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE version=${version}) THEN\n${sql}\n  END IF;`,
   );
 }
-const sql = `-- Generated from db/001.sql through db/008.sql by npm run build:bootstrap.
+const sql = `-- Generated from db/001.sql through db/009.sql by npm run build:bootstrap.
 -- Run in the selected Supabase project's SQL editor. No synthetic patient data is seeded.
 -- Existing numbered migrations are skipped; failures roll back the entire transaction.
 BEGIN;

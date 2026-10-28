@@ -122,7 +122,7 @@ try {
     await c.query(
       "CREATE TABLE IF NOT EXISTS schema_migrations(version integer PRIMARY KEY)",
     );
-    for (const version of [1, 2, 3, 4, 5, 6, 7, 8]) {
+    for (const version of [1, 2, 3, 4, 5, 6, 7, 8, 9]) {
       if (
         !(
           await c.query("SELECT 1 FROM schema_migrations WHERE version=$1", [
@@ -183,7 +183,7 @@ try {
   await pool.query(`GRANT ${runtimeRole} TO postgres`);
   await pool.query(`GRANT USAGE ON SCHEMA public TO ${runtimeRole}`);
   const tables = new Set<string>();
-  for (const version of [1, 2, 3, 4, 5, 6, 7, 8]) {
+  for (const version of [1, 2, 3, 4, 5, 6, 7, 8, 9]) {
     const sql = await readFile(
       new URL(`../db/00${version}.sql`, import.meta.url),
       "utf8",

@@ -5,7 +5,7 @@ await transaction(async (c) => {
   await c.query(
     "CREATE TABLE IF NOT EXISTS schema_migrations(version integer PRIMARY KEY)",
   );
-  for (const version of [1, 2, 3, 4, 5, 6, 7, 8])
+  for (const version of [1, 2, 3, 4, 5, 6, 7, 8, 9])
     if (
       !(
         await c.query("SELECT 1 FROM schema_migrations WHERE version=$1", [

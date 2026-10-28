@@ -28,6 +28,8 @@ If Chromium is absent: `npx playwright install --with-deps chromium`. Optionally
 
 ## Setup and deployment
 
+Medicine details now offer [sourced medicine information](docs/drug-information.md), separate from the patient's recorded prescribing reason. Apply migration 009 before deploying this feature.
+
 For the repository-to-container workflow, see [GitHub and container deployment](docs/github-deployment.md).
 
 For the selected Vercel and Supabase projects, see [Vercel + Supabase setup, deployment and live checks](docs/vercel-supabase.md). This option runs reminders through Supabase Cron and a bounded Vercel function.

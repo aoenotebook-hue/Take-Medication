@@ -29,3 +29,15 @@ Pending (cannot be verified from this environment): physical iPhone Home Screen 
 native Thai review, Supabase dashboard settings, and supervised patient testing.
 Deferred by design (plan section 4): refill reminders, OCR, service-worker update prompt, snapshot
 pagination.
+
+## Requested addition: medicine information
+
+**First implementation available locally.** Medicine details include seven sourced Thai/English
+ingredient summaries, optional real openFDA English label lookup, source comparison, separate
+prescribing purpose, authorized saved associations, identity-change review and private offline
+caching. Prescription fields are unchanged. Migration 009 is required before deployment.
+
+See [feature/setup documentation](drug-information.md) and
+[the AI coding plan addendum](Medication_PWA_Drug_Information_AI_Coding_Plan.txt).
+Clinical/native Thai review, live provider reachability, production migration/deployment and
+physical iPhone validation remain pending. English labels are not automatically translated.

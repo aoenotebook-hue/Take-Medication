@@ -38,6 +38,14 @@ import {
 } from "./pin-auth.js";
 import { productionConfigErrors } from "../../../scripts/production-config.js";
 import { once } from "node:events";
+import {
+  getDrugInformation,
+  searchDrugInformation,
+} from "./drug-information.js";
+import {
+  drugCardSchema,
+  identityKey,
+} from "../../../packages/domain/src/drug-information.js";
 import { purgePatient, runRetention } from "../../worker/src/retention.js";
 if (process.env.VERCEL) {
   const errors = productionConfigErrors(process.env);
@@ -360,6 +368,149 @@ app.use("/api", async (req, res, next) => {
   } catch (e) {
     next(e);
   }
+});
+const informationLimit = rateLimit({
+  windowMs: 60000,
+  limit: 20,
+  keyGenerator: (_req, res) => res.locals.user.id,
+  ...(process.env.VERCEL
+    ? { store: new PostgresRateStore("drug-information") }
+    : {}),
+});
+const informationPath =
+  "/api/patients/:id/medications/:medicationId/information";
+async function informationMedicine(
+  actorId: string,
+  patientInput: unknown,
+  medInput: unknown,
+) {
+  const patientId = z.string().uuid().parse(patientInput),
+    medId = z.string().uuid().parse(medInput);
+  await authorize(pool, actorId, patientId);
+  const med = (
+    await pool.query(
+      "SELECT * FROM medications WHERE id=$1 AND patient_id=$2 AND deleted_at IS NULL",
+      [medId, patientId],
+    )
+  ).rows[0];
+  if (!med) throw new HttpError(404, "Medicine not found");
+  return med;
+}
+app.get(informationPath, async (req, res) => {
+  const med = await informationMedicine(
+    res.locals.user.id,
+    req.params.id,
+    req.params.medicationId,
+  );
+  const saved = (
+    await pool.query(
+      "SELECT identity_key,card,confirmed_at FROM medication_information_matches WHERE medication_id=$1 AND patient_id=$2",
+      [med.id, req.params.id],
+    )
+  ).rows[0];
+  res.json({
+    identityKey: identityKey(med.data),
+    state: !saved
+      ? "not-found"
+      : saved.identity_key !== identityKey(med.data)
+        ? "needs-review"
+        : "matched",
+    card:
+      saved?.identity_key === identityKey(med.data)
+        ? drugCardSchema.parse(saved.card)
+        : null,
+  });
+});
+app.post(informationPath + "/search", informationLimit, async (req, res) => {
+  const med = await informationMedicine(
+    res.locals.user.id,
+    req.params.id,
+    req.params.medicationId,
+  );
+  const d = z
+    .object({
+      query: z.string().trim().min(2).max(100),
+      remote: z.boolean().default(false),
+    })
+    .strict()
+    .parse(req.body);
+  if (med.data.productType === "supplement") {
+    res.json({ cards: [], provider: "not-requested", unsupported: true });
+    return;
+  }
+  const result = await searchDrugInformation(d.query, d.remote);
+  // A membership or medicine identity may have changed during a provider request.
+  const current = await informationMedicine(
+    res.locals.user.id,
+    req.params.id,
+    med.id,
+  );
+  if (identityKey(current.data) !== identityKey(med.data))
+    throw new HttpError(409, "Medicine changed; search again");
+  res.json({ ...result, identityKey: identityKey(med.data) });
+});
+app.post(informationPath + "/match", informationLimit, async (req, res) => {
+  const med = await informationMedicine(
+    res.locals.user.id,
+    req.params.id,
+    req.params.medicationId,
+  );
+  await authorize(
+    pool,
+    res.locals.user.id,
+    z.string().uuid().parse(req.params.id),
+    "editor",
+  );
+  const d = z
+    .object({
+      id: z.string().regex(/^(catalog:[a-z]+|label:[a-f0-9-]{36})$/),
+      identityKey: z.string().max(2000),
+      confirmed: z.literal(true),
+    })
+    .strict()
+    .parse(req.body);
+  if (med.data.productType === "supplement")
+    throw new HttpError(
+      422,
+      "Medicine information unavailable for supplements",
+    );
+  if (d.identityKey !== identityKey(med.data))
+    throw new HttpError(409, "Medicine changed; search again");
+  let card;
+  try {
+    card = await getDrugInformation(d.id);
+  } catch {
+    throw new HttpError(503, "Source unavailable; retry");
+  }
+  if (!card) throw new HttpError(422, "Information not found");
+  await transaction(async (c) => {
+    await authorize(
+      c,
+      res.locals.user.id,
+      z.string().uuid().parse(req.params.id),
+      "editor",
+    );
+    const current = (
+      await c.query(
+        "SELECT data FROM medications WHERE id=$1 AND patient_id=$2 AND deleted_at IS NULL FOR UPDATE",
+        [med.id, req.params.id],
+      )
+    ).rows[0];
+    if (!current || identityKey(current.data) !== d.identityKey)
+      throw new HttpError(409, "Medicine changed; search again");
+    await c.query(
+      "INSERT INTO medication_information_matches(medication_id,patient_id,identity_key,card,actor_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT(medication_id) DO UPDATE SET identity_key=excluded.identity_key,card=excluded.card,actor_id=excluded.actor_id,confirmed_at=now()",
+      [med.id, req.params.id, d.identityKey, card, res.locals.user.id],
+    );
+    await audit(
+      c,
+      res.locals.user.id,
+      z.string().uuid().parse(req.params.id),
+      "medicine-information-match",
+      med.id,
+    );
+  });
+  res.json({ card, identityKey: d.identityKey, state: "matched" });
 });
 app.get("/api/patients", async (_req, res) => {
   res.json(
@@ -906,7 +1057,15 @@ app.post("/api/account/export", async (_req, res) => {
     )
   ).rows;
   const profiles = await Promise.all(
-    patients.map((p) => snapshot(actor, p.patient_id)),
+    patients.map(async (p) => ({
+      ...(await snapshot(actor, p.patient_id)),
+      informationMatches: (
+        await pool.query(
+          "SELECT medication_id,identity_key,card,confirmed_at FROM medication_information_matches WHERE patient_id=$1",
+          [p.patient_id],
+        )
+      ).rows,
+    })),
   );
   // Stream individual photo records so exports do not hit Vercel's buffered
   // response limit or accumulate all base64 files in server memory.

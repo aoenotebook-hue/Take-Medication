@@ -11,6 +11,241 @@
     }
   ],
   "paths": {
+    "/api/patients/{id}/medications/{medicationId}/information": {
+      "get": {
+        "summary": "Read separately saved education source; needs-review after medicine identity changes",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sign in required"
+          },
+          "403": {
+            "description": "Patient or device access denied"
+          },
+          "409": {
+            "description": "Optimistic concurrency conflict; authorized current version returned"
+          },
+          "422": {
+            "description": "Field validation failed"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Integration unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "in": "path",
+            "name": "medicationId",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/api/patients/{id}/medications/{medicationId}/information/search": {
+      "post": {
+        "summary": "Authorized drug lookup; external requests contain only search text, never patient details",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "query"
+                ],
+                "properties": {
+                  "query": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 100
+                  },
+                  "remote": {
+                    "type": "boolean",
+                    "default": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sign in required"
+          },
+          "403": {
+            "description": "Patient or device access denied"
+          },
+          "409": {
+            "description": "Optimistic concurrency conflict; authorized current version returned"
+          },
+          "422": {
+            "description": "Field validation failed"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Integration unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "in": "path",
+            "name": "medicationId",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/api/patients/{id}/medications/{medicationId}/information/match": {
+      "post": {
+        "summary": "Owner/editor confirms a source association; prescription fields stay unchanged",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "id",
+                  "identityKey",
+                  "confirmed"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^(catalog:[a-z]+|label:[a-f0-9-]{36})$"
+                  },
+                  "identityKey": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "confirmed": {
+                    "type": "boolean",
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sign in required"
+          },
+          "403": {
+            "description": "Patient or device access denied"
+          },
+          "409": {
+            "description": "Optimistic concurrency conflict; authorized current version returned"
+          },
+          "422": {
+            "description": "Field validation failed"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "Integration unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "in": "path",
+            "name": "medicationId",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
     "/api/patients": {
       "get": {
         "summary": "List explicitly authorized patient profiles",
@@ -1476,7 +1711,6 @@
         "properties": {
           "name": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 200
           },
           "generic": {
@@ -1601,7 +1835,7 @@
                 },
                 "unit": {
                   "type": "string",
-                  "minLength": 1
+                  "maxLength": 50
                 },
                 "weekdays": {
                   "minItems": 1,
@@ -1655,6 +1889,14 @@
           },
           "prnMaximum": {
             "type": "string"
+          },
+          "prnAmount": {
+            "type": "string",
+            "maxLength": 50
+          },
+          "prnUnit": {
+            "type": "string",
+            "maxLength": 50
           }
         },
         "required": [
